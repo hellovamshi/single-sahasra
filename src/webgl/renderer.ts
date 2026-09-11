@@ -96,6 +96,19 @@ export class FoldRenderer {
 
     gl.uniform1i(this.uImageLoc, 0);
 
+    // Provide instant placeholder texture so canvas is never blank black
+    if (typeof document !== 'undefined') {
+      const placeholderCanvas = document.createElement('canvas');
+      placeholderCanvas.width = 2;
+      placeholderCanvas.height = 2;
+      const ctx = placeholderCanvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#0a0d14';
+        ctx.fillRect(0, 0, 2, 2);
+        this.activeTexture = createTextureFromSource(gl, placeholderCanvas, 2, 2, this.mesh.vao);
+      }
+    }
+
     if (this.pendingSource && this.mesh) {
       this.setImage(this.pendingSource.source, this.pendingSource.width, this.pendingSource.height);
     }

@@ -51,22 +51,44 @@ export class PointerInputManager {
     this.isPointerDown = true;
     this.startX = e.clientX;
     this.currentX = e.clientX;
+    try {
+      (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignored
+    }
     this.processPointerPosition(e.clientX, true, e.pointerType === 'touch' ? 'touch' : 'pointer');
   };
 
   private onPointerMove = (e: PointerEvent): void => {
     if (!this.isEnabled) return;
     this.currentX = e.clientX;
-    // On desktop, hover movement also drives subtle preview fold if not dragging
+    const isTouch = e.pointerType === 'touch';
+    // For touch devices, only interact when finger is down (drag)
+    if (isTouch && !this.isPointerDown) return;
+
     this.processPointerPosition(
       e.clientX,
       this.isPointerDown,
-      e.pointerType === 'touch' ? 'touch' : 'pointer'
+      isTouch ? 'touch' : 'pointer'
     );
   };
 
-  private onPointerUp = (): void => {
+  private onPointerUp = (e: PointerEvent): void => {
     this.isPointerDown = false;
+    try {
+      (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+    } catch {
+      // Ignored
+    }
+    // When released, smoothly spring back to unfolded (0.0)
+    const state: FoldInputState = {
+      foldAmount: 0,
+      hingeDirection: 'LEFT',
+      tiltAngle: 0,
+      isInteracting: false,
+      source: e.pointerType === 'touch' ? 'touch' : 'pointer',
+    };
+    this.listeners.forEach((listener) => listener(state));
   };
 
   private processPointerPosition(

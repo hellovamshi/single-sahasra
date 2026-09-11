@@ -61,22 +61,40 @@ export class DeviceOrientationManager {
   public async requestPermission(): Promise<boolean> {
     if (typeof window === 'undefined') return false;
 
+    let granted = false;
+
+    // Request DeviceMotionEvent permission (iOS 13+)
     const motionClass = DeviceMotionEvent as unknown as {
       requestPermission?: () => Promise<string>;
     };
-
-    if (typeof motionClass.requestPermission === 'function') {
+    if (typeof motionClass?.requestPermission === 'function') {
       try {
         const res = await motionClass.requestPermission();
-        if (res === 'granted') {
-          this.permissionState = 'granted';
-          this.start();
-          return true;
-        }
+        if (res === 'granted') granted = true;
       } catch (e) {
         console.warn('DeviceMotionEvent permission error:', e);
       }
-    } else if ('DeviceMotionEvent' in window) {
+    }
+
+    // Request DeviceOrientationEvent permission (iOS 13+)
+    const orientationClass = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>;
+    };
+    if (typeof orientationClass?.requestPermission === 'function') {
+      try {
+        const res = await orientationClass.requestPermission();
+        if (res === 'granted') granted = true;
+      } catch (e) {
+        console.warn('DeviceOrientationEvent permission error:', e);
+      }
+    }
+
+    // Standard modern browser without permission requirement
+    if (!granted && ('DeviceMotionEvent' in window || 'DeviceOrientationEvent' in window)) {
+      granted = true;
+    }
+
+    if (granted) {
       this.permissionState = 'granted';
       this.start();
       return true;
@@ -90,14 +108,16 @@ export class DeviceOrientationManager {
     if (this.isListening || typeof window === 'undefined') return;
     this.isListening = true;
 
-    window.addEventListener('devicemotion', this.handleMotion, true);
-    window.addEventListener('deviceorientation', this.handleOrientation, true);
+    // Priority 1: DeviceOrientation (hardware sensor fusion)
+    window.addEventListener('deviceorientation', this.handleOrientation, { passive: true });
+    // Priority 2: DeviceMotion (gravity accelerometer)
+    window.addEventListener('devicemotion', this.handleMotion, { passive: true });
   }
 
   public stop(): void {
     if (!this.isListening || typeof window === 'undefined') return;
-    window.removeEventListener('devicemotion', this.handleMotion, true);
-    window.removeEventListener('deviceorientation', this.handleOrientation, true);
+    window.removeEventListener('deviceorientation', this.handleOrientation);
+    window.removeEventListener('devicemotion', this.handleMotion);
     this.isListening = false;
   }
 
@@ -116,19 +136,9 @@ export class DeviceOrientationManager {
     return (((value + 180) % 360 + 360) % 360) - 180;
   }
 
-  private handleMotion = (e: DeviceMotionEvent): void => {
-    const total = e.accelerationIncludingGravity;
-    const linear = e.acceleration;
-    if (!total || total.x === null || total.z === null) return;
-
-    const x = total.x - (linear?.x ?? 0);
-    const z = total.z - (linear?.z ?? 0);
-    if (!Number.isFinite(x) || !Number.isFinite(z) || Math.hypot(x, z) < 0.5) return;
-
+  private applyRoll(roll: number): void {
+    if (!Number.isFinite(roll)) return;
     this.hasReceivedData = true;
-
-    // Physical gravity roll angle in degrees
-    const roll = (Math.atan2(x, -z) * 180) / Math.PI;
 
     if (this.unwrapped === null) {
       this.unwrapped = roll;
@@ -137,19 +147,41 @@ export class DeviceOrientationManager {
     }
     this.previous = roll;
 
-    // Map -90..+90 physical tilt to -180..+180 turn span
+    // Map physical roll to fold degrees (-90..+90 physical -> -180..+180 display)
     this.targetDegrees = Math.max(-180, Math.min(180, -2 * this.unwrapped));
     this.emitData();
-  };
+  }
 
   private handleOrientation = (e: DeviceOrientationEvent): void => {
-    // If devicemotion is already providing data, skip
-    if (this.hasReceivedData) return;
-    if (e.gamma === null || e.gamma === undefined || isNaN(e.gamma)) return;
+    if (e.gamma === null || e.gamma === undefined || !Number.isFinite(e.gamma)) return;
+    // e.gamma directly gives lateral roll angle across all phone pitch angles
+    this.applyRoll(e.gamma);
+  };
 
-    // Fallback gamma roll
-    this.targetDegrees = Math.max(-180, Math.min(180, -2 * e.gamma));
-    this.emitData();
+  private handleMotion = (e: DeviceMotionEvent): void => {
+    // If deviceorientation is already providing high precision fused roll, skip
+    if (this.hasReceivedData && this.previous !== null) return;
+
+    const total = e.accelerationIncludingGravity;
+    if (!total || total.x === null) return;
+    const linear = e.acceleration;
+
+    const x = total.x - (linear?.x ?? 0);
+    const y = (total.y ?? 0) - (linear?.y ?? 0);
+    const z = (total.z ?? 0) - (linear?.z ?? 0);
+
+    let roll: number;
+    if (Math.abs(z) > 2.0) {
+      // Facing the sky or flat: standard gravity roll from solo.aauburn.com
+      roll = (Math.atan2(x, -z) * 180) / Math.PI;
+    } else if (Math.abs(y) > 1.0) {
+      // Held upright in hand
+      roll = (Math.atan2(x, -y) * 180) / Math.PI;
+    } else {
+      return;
+    }
+
+    this.applyRoll(roll);
   };
 
   private emitData(): void {

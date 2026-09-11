@@ -8,13 +8,15 @@ import { InstallSheet } from './InstallSheet';
 import { ChromeActions } from './ChromeActions';
 import { saveActiveImage, loadActiveImage, clearActiveImage } from '../storage/imageStorage';
 
-const DEFAULT_IMAGE_PATH = '/backgrounds/default.png';
+const DEFAULT_IMAGE_PATH = '/backgrounds/default.jpg';
+const FALLBACK_IMAGE_PATH = '/backgrounds/default.png';
 const INSTALL_SHOWN_KEY = 'sahasra_install_shown';
 
 export const FoldCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<FoldRenderer | null>(null);
   const inputControllerRef = useRef<InputController | null>(null);
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   const [hasCustomImage, setHasCustomImage] = useState<boolean>(false);
   const [isChromeHidden, setIsChromeHidden] = useState<boolean>(false);
@@ -82,8 +84,13 @@ export const FoldCanvas: React.FC = () => {
           applyImageSource(img);
           setHasCustomImage(true);
         } else {
-          const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
-          applyImageSource(img);
+          try {
+            const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
+            applyImageSource(img);
+          } catch {
+            const img = await loadImageFromUrl(FALLBACK_IMAGE_PATH);
+            applyImageSource(img);
+          }
         }
       } catch (err) {
         console.warn('Loading default fallback:', err);
@@ -91,7 +98,12 @@ export const FoldCanvas: React.FC = () => {
           const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
           applyImageSource(img);
         } catch {
-          // Keep canvas clean
+          try {
+            const img = await loadImageFromUrl(FALLBACK_IMAGE_PATH);
+            applyImageSource(img);
+          } catch {
+            // Keep canvas clean
+          }
         }
       }
     })();
@@ -156,11 +168,6 @@ export const FoldCanvas: React.FC = () => {
     }
   };
 
-  // Canvas tap: toggles action pills visibility
-  const handleCanvasClick = () => {
-    setIsChromeHidden((prev) => !prev);
-  };
-
   // File chosen
   const handleImageSelected = async (file: File) => {
     try {
@@ -179,8 +186,13 @@ export const FoldCanvas: React.FC = () => {
   const handleUseDefault = async () => {
     try {
       await clearActiveImage();
-      const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
-      applyImageSource(img);
+      try {
+        const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
+        applyImageSource(img);
+      } catch {
+        const img = await loadImageFromUrl(FALLBACK_IMAGE_PATH);
+        applyImageSource(img);
+      }
       setHasCustomImage(false);
     } catch (err) {
       console.error('Failed to restore default photo:', err);
@@ -206,7 +218,17 @@ export const FoldCanvas: React.FC = () => {
       <canvas
         ref={canvasRef}
         className="stage cursor-pointer"
-        onClick={handleCanvasClick}
+        onPointerDown={(e) => {
+          pointerDownPos.current = { x: e.clientX, y: e.clientY };
+        }}
+        onPointerUp={(e) => {
+          if (pointerDownPos.current) {
+            const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
+            if (dist < 10) {
+              setIsChromeHidden((prev) => !prev);
+            }
+          }
+        }}
         aria-label="Interactive folding display. Tap to toggle controls, roll phone to fold."
       />
 

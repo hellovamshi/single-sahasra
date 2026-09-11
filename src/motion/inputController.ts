@@ -8,7 +8,7 @@ import { DeviceOrientationManager } from './orientation';
 import { PointerInputManager } from './pointerInput';
 import { clamp } from '../utils/math';
 
-const FOLLOW = 12.0; // Exponential smoothing rate matching iPhone Solo
+const FOLLOW = 16.0; // Exponential smoothing rate matching iPhone Solo
 
 export class InputController {
   private orientationManager: DeviceOrientationManager;
