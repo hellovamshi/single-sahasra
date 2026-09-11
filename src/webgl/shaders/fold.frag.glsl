@@ -1,89 +1,71 @@
 #version 300 es
 precision highp float;
 
+uniform sampler2D u_image;
+uniform vec2 u_imageSize;
+uniform vec2 u_cover;
+uniform float u_aspect;
+uniform float u_turn;
+uniform float u_hinge; // 0.0 = LEFT hinge, 1.0 = RIGHT hinge
+
 in vec2 v_uv;
-in vec3 v_normal;
-in vec3 v_viewPosition;
-in float v_hingeDistance;
-in float v_foldAmount;
-in vec2 v_gridUv;
+out vec4 outColor;
 
-uniform sampler2D u_texture;
-uniform float u_maxLod;          // Mipmap level (4.0 - 6.0)
-uniform float u_tiltAngle;       // Device tilt angle in degrees
-uniform vec2 u_resolution;       // Viewport resolution
+const float HALF_PI = 1.570796327;
+const float BLUR = 0.0315;
+const float MAX_TILT = 0.941917; // acos(1.0 / 1.7)
+const vec3 DARK = vec3(0.0, 0.0, 0.0);
 
-out vec4 fragColor;
+vec3 sampleImage(vec2 uv, float sigma) {
+  vec2 tuv = (uv - 0.5) * u_cover + 0.5;
+  float lod = max(0.0, log2(max(sigma, 1.0)));
+  vec3 blurred = textureLod(u_image, tuv, max(1.0, lod)).rgb;
+  if (sigma >= 2.0) return blurred;
+  return mix(textureLod(u_image, tuv, 0.0).rgb, blurred, smoothstep(0.0, 2.0, sigma));
+}
 
 void main() {
-    // Normalized distance from hinge: 0.0 at hinge, 1.0 at outer edge
-    float s = clamp(v_hingeDistance, 0.0, 1.0);
+  float turn = clamp(u_turn, 0.0, 1.0);
+  if (turn <= 0.00001) {
+    outColor = vec4(sampleImage(v_uv, 0.0), 1.0);
+    return;
+  }
 
-    // 1. PROGRESSIVE DEFOCUS BLUR & CHROMATIC GLASS DISPERSION
-    float blurIntensity = pow(s, 1.35) * v_foldAmount;
-    float targetLod = blurIntensity * u_maxLod;
+  // Inverse perspective ray projection into stationary image plane
+  float outer = 1.0 - u_hinge;
+  float fromHinge = abs(v_uv.x - u_hinge);
+  float tilt = turn * HALF_PI;
+  float bend = min(tilt, MAX_TILT);
+  float cosine = cos(bend);
+  float sine = sin(bend);
 
-    // Subtle chromatic dispersion across curved glass
-    float disp = blurIntensity * 0.0045;
-    vec2 offsetR = vec2(disp, disp * 0.5);
-    vec2 offsetB = vec2(-disp, -disp * 0.5);
+  float eye = 2.4 * max(u_aspect, 1.0);
+  float depth = fromHinge * u_aspect * sine;
+  float perspective = eye / (eye - depth);
+  vec2 plane;
+  plane.x = u_hinge + (v_uv.x - u_hinge) * cosine * perspective;
+  plane.y = 0.5 + (v_uv.y - 0.5) * perspective;
 
-    // Multi-tap sample with chromatic split for optical glass realism
-    float r = textureLod(u_texture, v_uv + offsetR, targetLod).r;
-    float g = textureLod(u_texture, v_uv, targetLod).g;
-    float b = textureLod(u_texture, v_uv + offsetB, targetLod).b;
-    float a = textureLod(u_texture, v_uv, targetLod).a;
+  // Defocus progressive blur
+  float blurAngle = pow(smoothstep(0.0, HALF_PI, tilt), 0.5);
+  float blurSpread = pow(smoothstep(0.0, 0.7, fromHinge), 1.45);
+  float defocus = blurAngle * mix(0.18, 1.0, blurSpread);
+  float sigma = u_imageSize.x * BLUR * defocus;
 
-    // 4 additional Poisson taps to soften bokeh
-    float poissScale = blurIntensity * 0.004;
-    vec4 tap1 = textureLod(u_texture, v_uv + vec2(poissScale, poissScale), targetLod);
-    vec4 tap2 = textureLod(u_texture, v_uv + vec2(-poissScale, poissScale), targetLod);
-    vec4 tap3 = textureLod(u_texture, v_uv + vec2(-poissScale, -poissScale), targetLod);
-    vec4 tap4 = textureLod(u_texture, v_uv + vec2(poissScale, -poissScale), targetLod);
-    vec4 avgColor = (tap1 + tap2 + tap3 + tap4) * 0.25;
+  // Vertical perspective margins with anti-aliasing
+  float softness = fwidth(v_uv.y) + 2.0 * sigma / u_imageSize.y;
+  float mask = 1.0 - smoothstep(0.5 - softness, 0.5 + softness, abs(plane.y - 0.5));
 
-    vec3 baseColor = mix(vec3(r, g, b), avgColor.rgb, clamp(blurIntensity * 1.5, 0.0, 0.7));
+  // OLED Glass tint & sheen reflection
+  vec3 color = sampleImage(plane, sigma);
+  float glass = sine * pow(fromHinge, 1.6);
+  color *= 1.0 - mix(0.28, 0.06, outer) * glass;
+  float reflection = exp(-pow((fromHinge - 0.70) / 0.30, 2.0)) * sine;
+  color += vec3(0.82, 0.85, 0.86) * reflection * 0.025;
 
-    // 2. GLASS SHADING & SPECULAR REFLECTION
-    vec3 N = normalize(v_normal);
-    vec3 V = normalize(-v_viewPosition);
+  // Fade into dark void
+  float fade = clamp((fromHinge - 0.26) / 0.74, 0.0, 1.0);
+  color *= 1.0 - 0.7 * blurAngle * fade;
 
-    // Dynamic light based on phone roll angle
-    float tiltRad = radians(u_tiltAngle * 0.4);
-    vec3 lightDir = normalize(vec3(sin(tiltRad) * 0.4 + 0.1, 0.5, 0.85));
-    vec3 H = normalize(lightDir + V);
-
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
-
-    // Dual-lobe glass reflection:
-    // Broad glossy sheen + soft ambient glass highlights
-    float wideSheen = pow(NdotH, 8.0) * 0.09 * (0.4 + 0.6 * v_foldAmount);
-    float sharpSpec = pow(NdotH, 32.0) * 0.18 * v_foldAmount;
-
-    // Soft Fresnel glass rim (cool tone)
-    float fresnel = pow(1.0 - NdotV, 3.5) * 0.12 * v_foldAmount;
-    vec3 glassRimColor = vec3(0.85, 0.92, 1.0) * fresnel;
-
-    // 3. DEPTH SHADOW & VOID INTEGRATION
-    // Soft depth attenuation as the sheet folds backward
-    float depthFade = mix(1.0, 0.48, pow(s, 1.2) * v_foldAmount);
-
-    vec3 finalRgb = baseColor * depthFade;
-    finalRgb += vec3(wideSheen + sharpSpec);
-    finalRgb += glassRimColor;
-
-    // 4. SEAMLESS GLASS EDGE FADE (NO SHARP CUTTING BORDERS)
-    // The receding outer edge dissolves softly into the background void
-    float outerEdgeFade = smoothstep(1.0, 0.76, s * v_foldAmount);
-
-    // Subtle edge feathering on the 4 canvas boundaries to avoid sharp polygon clipping
-    float borderFeatherX = smoothstep(0.0, 0.015, v_gridUv.x) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.x));
-    float borderFeatherY = smoothstep(0.0, 0.015, v_gridUv.y) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.y));
-    float seamlessMask = borderFeatherX * borderFeatherY;
-
-    // Glass opacity smoothly blending into the black void
-    float finalAlpha = a * outerEdgeFade * mix(1.0, seamlessMask, v_foldAmount * 0.5);
-
-    fragColor = vec4(finalRgb * finalAlpha, finalAlpha);
+  outColor = vec4(mix(DARK, color, mask), 1.0);
 }

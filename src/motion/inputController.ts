@@ -1,67 +1,53 @@
 /**
- * Unified Input Controller that blends DeviceOrientation, DeviceMotion, Pointer, Touch,
- * and Keyboard inputs into a butter-smooth, jitter-free folding state.
+ * Unified Input Controller using exponential follow smoothing
+ * and inverse screen-space fold physics.
  */
 
 import { FoldInputState, HingeDirection, PermissionState } from './types';
 import { DeviceOrientationManager } from './orientation';
 import { PointerInputManager } from './pointerInput';
-import { clamp, lerp } from '../utils/math';
+import { clamp } from '../utils/math';
+
+const FOLLOW = 12.0; // Exponential smoothing rate matching iPhone Solo
 
 export class InputController {
   private orientationManager: DeviceOrientationManager;
   private pointerManager: PointerInputManager;
 
-  // Smoothed output state
-  private currentFoldAmount: number = 0;
-  private currentHingeDirection: HingeDirection = 'LEFT';
-  private currentTiltAngle: number = 0;
+  // Degrees: -180 to +180
+  private targetDegrees: number = 0;
+  private displayDegrees: number = 0;
 
-  // Raw targets from sensors / pointer
-  private targetFoldAmount: number = 0;
-  private targetHingeDirection: HingeDirection = 'LEFT';
-  private targetTiltAngle: number = 0;
-
-  // Mode tracking
-  private activeInputSource: 'motion' | 'pointer' | 'touch' | 'keyboard' = 'pointer';
   private hasActiveMotion: boolean = false;
   private motionListeners: Set<(active: boolean) => void> = new Set();
-
-  // Smoothing factor (lerp per frame)
-  private readonly smoothingFactor: number = 0.14;
+  private isPointerInteracting: boolean = false;
 
   constructor() {
     this.orientationManager = new DeviceOrientationManager();
     this.pointerManager = new PointerInputManager();
 
-    // Subscribe to orientation updates
     this.orientationManager.subscribe((data) => {
       if (data.available) {
         if (!this.hasActiveMotion) {
           this.hasActiveMotion = true;
           this.motionListeners.forEach((fn) => fn(true));
         }
-        this.activeInputSource = 'motion';
-        this.targetFoldAmount = data.foldAmount;
-        this.targetHingeDirection = data.hingeDirection;
-        this.targetTiltAngle = data.rollAngle;
+
+        if (!this.isPointerInteracting) {
+          this.targetDegrees = data.targetDegrees;
+        }
       }
     });
 
-    // Subscribe to pointer updates
     this.pointerManager.subscribe((state) => {
-      // If user is actively touching or dragging, prioritize touch/drag
-      if (state.isInteracting) {
-        this.activeInputSource = state.source;
-        this.targetFoldAmount = state.foldAmount;
-        this.targetHingeDirection = state.hingeDirection;
-        this.targetTiltAngle = state.tiltAngle;
-      } else if (!this.hasActiveMotion) {
-        // Desktop mouse hover when no motion sensors are present
-        this.activeInputSource = state.source;
-        this.targetFoldAmount = state.foldAmount;
-        this.targetHingeDirection = state.hingeDirection;
-        this.targetTiltAngle = state.tiltAngle;
+      this.isPointerInteracting = state.isInteracting;
+
+      if (state.isInteracting || !this.hasActiveMotion) {
+        // Map pointer centerDiff (-0.5 to +0.5) to -180 to +180
+        const degrees = state.hingeDirection === 'LEFT'
+          ? state.foldAmount * 180
+          : -state.foldAmount * 180;
+        this.targetDegrees = degrees;
       }
     });
   }
@@ -100,58 +86,45 @@ export class InputController {
   }
 
   public reset(): void {
-    this.targetFoldAmount = 0;
-    this.currentFoldAmount = 0;
-    this.targetTiltAngle = 0;
-    this.currentTiltAngle = 0;
+    this.targetDegrees = 0;
+    this.displayDegrees = 0;
     this.orientationManager.resetBaseline();
   }
 
   /**
-   * Called on every requestAnimationFrame loop.
-   * Performs continuous dampening, prevents hinge-flip jumping, and clamps extremes.
+   * Exponential decay frame update matching iPhone Solo:
+   * display += (target - display) * (1 - Math.exp(-dt * FOLLOW))
    */
   public update(deltaTime: number): FoldInputState {
-    // Prevent sudden visual flip when crossing center:
-    // If target hinge differs from current hinge, first interpolate towards 0
-    if (
-      this.targetHingeDirection !== this.currentHingeDirection &&
-      this.currentFoldAmount > 0.03
-    ) {
-      // Smoothly descend to flat before flipping hinge side
-      this.currentFoldAmount = lerp(this.currentFoldAmount, 0, this.smoothingFactor * 1.5);
-    } else {
-      // Once flat enough, safely flip direction and resume interpolating to target
-      this.currentHingeDirection = this.targetHingeDirection;
-      this.currentFoldAmount = lerp(
-        this.currentFoldAmount,
-        this.targetFoldAmount,
-        this.smoothingFactor
-      );
+    const factor = 1.0 - Math.exp(-deltaTime * FOLLOW);
+    this.displayDegrees += (this.targetDegrees - this.displayDegrees) * factor;
+
+    if (Math.abs(this.targetDegrees - this.displayDegrees) < 0.001) {
+      this.displayDegrees = this.targetDegrees;
     }
 
-    this.currentTiltAngle = lerp(
-      this.currentTiltAngle,
-      this.targetTiltAngle,
-      this.smoothingFactor
-    );
+    const turn = clamp(Math.abs(this.displayDegrees) / 180, 0, 1);
+    const hingeDirection: HingeDirection = this.displayDegrees >= 0 ? 'LEFT' : 'RIGHT';
 
     return {
-      foldAmount: clamp(this.currentFoldAmount, 0, 1),
-      hingeDirection: this.currentHingeDirection,
-      tiltAngle: this.currentTiltAngle,
-      isInteracting: this.currentFoldAmount > 0.01,
-      source: this.activeInputSource,
+      foldAmount: turn,
+      hingeDirection,
+      tiltAngle: this.displayDegrees,
+      isInteracting: turn > 0.001,
+      source: this.hasActiveMotion ? 'motion' : 'pointer',
     };
   }
 
   public getCurrentState(): FoldInputState {
+    const turn = clamp(Math.abs(this.displayDegrees) / 180, 0, 1);
+    const hingeDirection: HingeDirection = this.displayDegrees >= 0 ? 'LEFT' : 'RIGHT';
+
     return {
-      foldAmount: clamp(this.currentFoldAmount, 0, 1),
-      hingeDirection: this.currentHingeDirection,
-      tiltAngle: this.currentTiltAngle,
-      isInteracting: this.currentFoldAmount > 0.01,
-      source: this.activeInputSource,
+      foldAmount: turn,
+      hingeDirection,
+      tiltAngle: this.displayDegrees,
+      isInteracting: turn > 0.001,
+      source: this.hasActiveMotion ? 'motion' : 'pointer',
     };
   }
 }

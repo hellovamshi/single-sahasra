@@ -6,160 +6,101 @@ export const VERTEX_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
 layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_uv;
-
-uniform mat4 u_projectionMatrix;
-uniform mat4 u_modelViewMatrix;
-uniform float u_foldAmount;
-uniform int u_hinge;
-uniform vec2 u_screenSize;
-uniform vec2 u_uvScale;
-uniform vec2 u_uvOffset;
-
 out vec2 v_uv;
-out vec3 v_normal;
-out vec3 v_viewPosition;
-out float v_hingeDistance;
-out float v_foldAmount;
-out vec2 v_gridUv;
-
-const float MAX_FOLD_ANGLE = 1.42;
 
 void main() {
-    v_gridUv = a_uv;
-    v_uv = a_uv * u_uvScale + u_uvOffset;
-    v_foldAmount = u_foldAmount;
-
-    float xBase = a_position.x * u_screenSize.x;
-    float yBase = a_position.y * u_screenSize.y;
-
-    float s = (u_hinge == 0) ? a_uv.x : (1.0 - a_uv.x);
-    v_hingeDistance = s;
-
-    float bendAngle = u_foldAmount * MAX_FOLD_ANGLE * pow(s, 1.15);
-
-    vec3 localPos = vec3(xBase, yBase, 0.0);
-    vec3 normal = vec3(0.0, 0.0, 1.0);
-
-    if (u_foldAmount > 0.0001) {
-        if (u_hinge == 0) {
-            float hingeX = -u_screenSize.x;
-            float distFromHinge = localPos.x - hingeX;
-            localPos.x = hingeX + distFromHinge * cos(bendAngle);
-            localPos.z = -distFromHinge * sin(bendAngle) * 1.2;
-            normal = vec3(sin(bendAngle), 0.0, cos(bendAngle));
-        } else {
-            float hingeX = u_screenSize.x;
-            float distFromHinge = hingeX - localPos.x;
-            localPos.x = hingeX - distFromHinge * cos(bendAngle);
-            localPos.z = -distFromHinge * sin(bendAngle) * 1.2;
-            normal = vec3(-sin(bendAngle), 0.0, cos(bendAngle));
-        }
-    }
-
-    vec4 viewPos = u_modelViewMatrix * vec4(localPos, 1.0);
-    v_viewPosition = viewPos.xyz;
-    v_normal = normalize(mat3(u_modelViewMatrix) * normal);
-
-    gl_Position = u_projectionMatrix * viewPos;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+  v_uv = a_position * 0.5 + 0.5;
 }
 `;
 
 export const FOLD_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
 
+uniform sampler2D u_image;
+uniform vec2 u_imageSize;
+uniform vec2 u_cover;
+uniform float u_aspect;
+uniform float u_turn;
+uniform float u_hinge;
+
 in vec2 v_uv;
-in vec3 v_normal;
-in vec3 v_viewPosition;
-in float v_hingeDistance;
-in float v_foldAmount;
-in vec2 v_gridUv;
+out vec4 outColor;
 
-uniform sampler2D u_texture;
-uniform float u_maxLod;
-uniform float u_tiltAngle;
-uniform vec2 u_resolution;
+const float HALF_PI = 1.570796327;
+const float BLUR = 0.0315;
+const float MAX_TILT = 0.941917;
+const vec3 DARK = vec3(0.0, 0.0, 0.0);
 
-out vec4 fragColor;
+vec3 sampleImage(vec2 uv, float sigma) {
+  vec2 tuv = (uv - 0.5) * u_cover + 0.5;
+  float lod = max(0.0, log2(max(sigma, 1.0)));
+  vec3 blurred = textureLod(u_image, tuv, max(1.0, lod)).rgb;
+  if (sigma >= 2.0) return blurred;
+  return mix(textureLod(u_image, tuv, 0.0).rgb, blurred, smoothstep(0.0, 2.0, sigma));
+}
 
 void main() {
-    float s = clamp(v_hingeDistance, 0.0, 1.0);
+  float turn = clamp(u_turn, 0.0, 1.0);
+  if (turn <= 0.00001) {
+    outColor = vec4(sampleImage(v_uv, 0.0), 1.0);
+    return;
+  }
 
-    float blurIntensity = pow(s, 1.35) * v_foldAmount;
-    float targetLod = blurIntensity * u_maxLod;
+  // Hinge projection
+  float outer = 1.0 - u_hinge;
+  float fromHinge = abs(v_uv.x - u_hinge);
+  float tilt = turn * HALF_PI;
+  float bend = min(tilt, MAX_TILT);
+  float cosine = cos(bend);
+  float sine = sin(bend);
 
-    float disp = blurIntensity * 0.0045;
-    vec2 offsetR = vec2(disp, disp * 0.5);
-    vec2 offsetB = vec2(-disp, -disp * 0.5);
+  float eye = 2.4 * max(u_aspect, 1.0);
+  float depth = fromHinge * u_aspect * sine;
+  float perspective = eye / (eye - depth);
+  vec2 plane;
+  plane.x = u_hinge + (v_uv.x - u_hinge) * cosine * perspective;
+  plane.y = 0.5 + (v_uv.y - 0.5) * perspective;
 
-    float r = textureLod(u_texture, v_uv + offsetR, targetLod).r;
-    float g = textureLod(u_texture, v_uv, targetLod).g;
-    float b = textureLod(u_texture, v_uv + offsetB, targetLod).b;
-    float a = textureLod(u_texture, v_uv, targetLod).a;
+  // Defocus
+  float blurAngle = pow(smoothstep(0.0, HALF_PI, tilt), 0.5);
+  float blurSpread = pow(smoothstep(0.0, 0.7, fromHinge), 1.45);
+  float defocus = blurAngle * mix(0.18, 1.0, blurSpread);
+  float sigma = u_imageSize.x * BLUR * defocus;
 
-    float poissScale = blurIntensity * 0.004;
-    vec4 tap1 = textureLod(u_texture, v_uv + vec2(poissScale, poissScale), targetLod);
-    vec4 tap2 = textureLod(u_texture, v_uv + vec2(-poissScale, poissScale), targetLod);
-    vec4 tap3 = textureLod(u_texture, v_uv + vec2(-poissScale, -poissScale), targetLod);
-    vec4 tap4 = textureLod(u_texture, v_uv + vec2(poissScale, -poissScale), targetLod);
-    vec4 avgColor = (tap1 + tap2 + tap3 + tap4) * 0.25;
+  // Vertical margins
+  float softness = fwidth(v_uv.y) + 2.0 * sigma / u_imageSize.y;
+  float mask = 1.0 - smoothstep(0.5 - softness, 0.5 + softness, abs(plane.y - 0.5));
 
-    vec3 baseColor = mix(vec3(r, g, b), avgColor.rgb, clamp(blurIntensity * 1.5, 0.0, 0.7));
+  // Glass
+  vec3 color = sampleImage(plane, sigma);
+  float glass = sine * pow(fromHinge, 1.6);
+  color *= 1.0 - mix(0.28, 0.06, outer) * glass;
+  float reflection = exp(-pow((fromHinge - 0.70) / 0.30, 2.0)) * sine;
+  color += vec3(0.82, 0.85, 0.86) * reflection * 0.025;
 
-    vec3 N = normalize(v_normal);
-    vec3 V = normalize(-v_viewPosition);
+  // Void
+  float fade = clamp((fromHinge - 0.26) / 0.74, 0.0, 1.0);
+  color *= 1.0 - 0.7 * blurAngle * fade;
 
-    float tiltRad = radians(u_tiltAngle * 0.4);
-    vec3 lightDir = normalize(vec3(sin(tiltRad) * 0.4 + 0.1, 0.5, 0.85));
-    vec3 H = normalize(lightDir + V);
-
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
-
-    float wideSheen = pow(NdotH, 8.0) * 0.09 * (0.4 + 0.6 * v_foldAmount);
-    float sharpSpec = pow(NdotH, 32.0) * 0.18 * v_foldAmount;
-
-    float fresnel = pow(1.0 - NdotV, 3.5) * 0.12 * v_foldAmount;
-    vec3 glassRimColor = vec3(0.85, 0.92, 1.0) * fresnel;
-
-    float depthFade = mix(1.0, 0.48, pow(s, 1.2) * v_foldAmount);
-
-    vec3 finalRgb = baseColor * depthFade;
-    finalRgb += vec3(wideSheen + sharpSpec);
-    finalRgb += glassRimColor;
-
-    float outerEdgeFade = smoothstep(1.0, 0.76, s * v_foldAmount);
-    float borderFeatherX = smoothstep(0.0, 0.015, v_gridUv.x) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.x));
-    float borderFeatherY = smoothstep(0.0, 0.015, v_gridUv.y) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.y));
-    float seamlessMask = borderFeatherX * borderFeatherY;
-
-    float finalAlpha = a * outerEdgeFade * mix(1.0, seamlessMask, v_foldAmount * 0.5);
-
-    fragColor = vec4(finalRgb * finalAlpha, finalAlpha);
+  outColor = vec4(mix(DARK, color, mask), 1.0);
 }
 `;
 
-export const BLUR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+export const GAUSS_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision highp float;
-
+uniform sampler2D u_source;
+uniform vec2 u_step;
+uniform float u_level;
 in vec2 v_uv;
-uniform sampler2D u_image;
-uniform vec2 u_direction;
-uniform float u_radius;
-
-out vec4 fragColor;
+out vec4 outColor;
 
 void main() {
-    vec4 sum = vec4(0.0);
-    float weight[5] = float[](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
-
-    sum += texture(u_image, v_uv) * weight[0];
-    for (int i = 1; i < 5; i++) {
-        vec2 offset = u_direction * float(i) * u_radius;
-        sum += texture(u_image, v_uv + offset) * weight[i];
-        sum += texture(u_image, v_uv - offset) * weight[i];
-    }
-
-    fragColor = sum;
+  vec4 color = textureLod(u_source, v_uv, u_level) * 0.2270270270;
+  color += textureLod(u_source, v_uv + u_step * 1.3846153846, u_level) * 0.3162162162;
+  color += textureLod(u_source, v_uv - u_step * 1.3846153846, u_level) * 0.3162162162;
+  color += textureLod(u_source, v_uv + u_step * 3.2307692308, u_level) * 0.0702702703;
+  color += textureLod(u_source, v_uv - u_step * 3.2307692308, u_level) * 0.0702702703;
+  outColor = color;
 }
 `;
