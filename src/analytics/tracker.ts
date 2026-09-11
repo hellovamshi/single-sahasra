@@ -219,17 +219,29 @@ export function trackEvent(eventType: EventType): void {
 /**
  * Fetch all metrics for Admin Dashboard
  */
-export async function fetchAllMetrics(): Promise<DashboardMetrics> {
+export async function fetchAllMetrics(token?: string): Promise<DashboardMetrics> {
   try {
-    // First try internal backend API
-    const apiRes = await fetch('/api/admin/stats').catch(() => null);
-    if (apiRes && apiRes.ok) {
-      const data = await apiRes.json();
-      if (data && typeof data.views === 'number') {
-        return data;
+    // First try internal backend API with security token
+    const apiRes = await fetch('/api/admin/stats', {
+      headers: token ? { 'x-admin-token': token } : {},
+      cache: 'no-store',
+    }).catch(() => null);
+
+    if (apiRes) {
+      if (apiRes.status === 401) {
+        throw new Error('UNAUTHORIZED');
+      }
+      if (apiRes.ok) {
+        const data = await apiRes.json();
+        if (data && typeof data.views === 'number') {
+          return data;
+        }
       }
     }
-  } catch {
+  } catch (err: any) {
+    if (err?.message === 'UNAUTHORIZED') {
+      throw err;
+    }
     // fallback below
   }
 

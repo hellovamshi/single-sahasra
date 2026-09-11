@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getAdminAuthToken } from '@/lib/auth';
 
 const BASE_URL = 'https://abacus.jasoncameron.dev';
 const NAMESPACE = 'sahasra-solo';
@@ -18,7 +19,14 @@ async function getCounter(key: string): Promise<number> {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  // Verify token
+  const clientToken = req.headers.get('x-admin-token');
+  const validToken = getAdminAuthToken();
+
+  if (!clientToken || clientToken !== validToken) {
+    return NextResponse.json({ error: 'Unauthorized: Access Denied' }, { status: 401 });
+  }
   try {
     const [
       views,

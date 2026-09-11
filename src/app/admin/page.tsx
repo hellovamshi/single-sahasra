@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchAllMetrics, DashboardMetrics, ActivityLogEntry } from '../../analytics/tracker';
 
-const DEFAULT_PIN = 'sahasra2026';
-const AUTH_KEY = 'sahasra_admin_auth_v1';
+const AUTH_KEY = 'sahasra_admin_token_v1';
 
 export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -21,20 +22,41 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const stored = sessionStorage.getItem(AUTH_KEY);
-      if (stored === 'authenticated') {
+      if (stored) {
         setIsAuthenticated(true);
       }
     }
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput.trim() === DEFAULT_PIN) {
-      sessionStorage.setItem(AUTH_KEY, 'authenticated');
-      setIsAuthenticated(true);
-      setErrorMsg(null);
-    } else {
-      setErrorMsg('Incorrect Passcode. Try again.');
+    if (!pinInput.trim()) {
+      setErrorMsg('Please enter the password.');
+      return;
+    }
+
+    setIsVerifying(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await fetch('/api/admin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pinInput }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        sessionStorage.setItem(AUTH_KEY, data.token);
+        setIsAuthenticated(true);
+        setErrorMsg(null);
+      } else {
+        setErrorMsg(data.error || 'Access Denied: Incorrect Password');
+      }
+    } catch {
+      setErrorMsg('Authentication error. Please try again.');
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -44,15 +66,22 @@ export default function AdminDashboardPage() {
     setPinInput('');
   };
 
-  // Load metrics
+  // Load metrics with token
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await fetchAllMetrics();
+      const token = typeof window !== 'undefined' ? sessionStorage.getItem(AUTH_KEY) || undefined : undefined;
+      const data = await fetchAllMetrics(token);
       setMetrics(data);
       setLastRefreshed(new Date());
-    } catch (err) {
-      console.error('Failed to load metrics:', err);
+    } catch (err: any) {
+      if (err?.message === 'UNAUTHORIZED') {
+        sessionStorage.removeItem(AUTH_KEY);
+        setIsAuthenticated(false);
+        setErrorMsg('Access Denied. Please re-enter the password.');
+      } else {
+        console.error('Failed to load metrics:', err);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -73,7 +102,7 @@ export default function AdminDashboardPage() {
     return () => clearInterval(interval);
   }, [isAuthenticated, autoRefreshInterval, loadData]);
 
-  // If not authenticated: Show Passcode Gate
+  // If not authenticated: Show Secure Password Gate
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#07090E] text-white flex flex-col items-center justify-center p-4 selection:bg-emerald-500/30">
@@ -84,28 +113,46 @@ export default function AdminDashboardPage() {
                 <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
               </svg>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">Sahasra Solo Admin</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Security Verification</h1>
             <p className="text-sm text-white/50 mt-1">
-              Enter passcode to unlock analytics and visitor metrics
+              Restricted Area. Enter administrator password to proceed.
             </p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-white/70 mb-1.5 uppercase tracking-wider">
-                Admin Passcode
+                Password
               </label>
-              <input
-                type="password"
-                placeholder="Enter passcode"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                autoFocus
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition text-center tracking-widest text-lg font-mono"
-              />
-              <p className="text-[11px] text-white/40 mt-1.5 text-center">
-                Default: <span className="font-mono text-emerald-400/90 font-semibold">{DEFAULT_PIN}</span>
-              </p>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter administrator password"
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  autoFocus
+                  disabled={isVerifying}
+                  className="w-full px-4 py-3 pr-11 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/25 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition tracking-wide text-base font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition p-1"
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
 
             {errorMsg && (
@@ -116,9 +163,19 @@ export default function AdminDashboardPage() {
 
             <button
               type="submit"
-              className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-semibold shadow-lg shadow-emerald-500/20 transition-all active:scale-98"
+              disabled={isVerifying}
+              className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-semibold shadow-lg shadow-emerald-500/20 transition-all active:scale-98 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              Unlock Dashboard
+              {isVerifying ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Verifying...</span>
+                </>
+              ) : (
+                <span>Unlock Dashboard</span>
+              )}
             </button>
           </form>
         </div>

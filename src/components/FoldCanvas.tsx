@@ -26,6 +26,11 @@ export const FoldCanvas: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [hintText, setHintText] = useState<string | null>(null);
 
+  // User engagement flags: 15-20s delay + user roll detection
+  const hasRolledRef = useRef<boolean>(false);
+  const minTimePassedRef = useRef<boolean>(false);
+  const socialShownRef = useRef<boolean>(false);
+
   // Load and apply an image to the renderer
   const applyImageSource = useCallback((source: HTMLImageElement) => {
     if (rendererRef.current) {
@@ -103,9 +108,36 @@ export const FoldCanvas: React.FC = () => {
       }
     })();
 
-    // 4. Start 60 FPS Render Loop
+    // Helper to trigger social popup once both conditions are met:
+    // 1. Timing: 15-20s (18s) elapsed
+    // 2. User has rolled or folded the phone
+    const checkAndTriggerSocial = () => {
+      if (socialShownRef.current) return;
+      if (!minTimePassedRef.current || !hasRolledRef.current) return;
+
+      const alreadyShown = typeof window !== 'undefined' ? sessionStorage.getItem('sahasra_social_shown') : null;
+      if (alreadyShown) return;
+
+      socialShownRef.current = true;
+      sessionStorage.setItem('sahasra_social_shown', '1');
+
+      // Give 1 second breather after the roll before smoothly opening sheet
+      setTimeout(() => {
+        setShowSocialPopup(true);
+      }, 1000);
+    };
+
+    // 4. Start 60 FPS Render Loop with Roll Detection
     renderer.start(() => {
-      return inputController.update(0.016);
+      const state = inputController.update(0.016);
+
+      // Detect when user rolls or folds the phone (tilt > 20 deg or foldAmount > 0.12)
+      if (!hasRolledRef.current && state.foldAmount > 0.12) {
+        hasRolledRef.current = true;
+        checkAndTriggerSocial();
+      }
+
+      return state;
     });
 
     // 5. Automatic Device Detection (Mobile vs Laptop/Desktop & Android vs iOS)
@@ -157,14 +189,11 @@ export const FoldCanvas: React.FC = () => {
     window.addEventListener('resize', handleResize, { passive: true });
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
-    // 8. Auto-popup for Community (WhatsApp/Instagram) after user has explored the app (35s)
+    // 8. Auto-popup timing: 15-20 seconds (18s) - triggers only after user has rolled
     const socialTimer = setTimeout(() => {
-      const alreadyShown = typeof window !== 'undefined' ? sessionStorage.getItem('sahasra_social_shown') : null;
-      if (!alreadyShown) {
-        sessionStorage.setItem('sahasra_social_shown', '1');
-        setShowSocialPopup(true);
-      }
-    }, 35000);
+      minTimePassedRef.current = true;
+      checkAndTriggerSocial();
+    }, 18000);
 
     return () => {
       clearTimeout(socialTimer);
