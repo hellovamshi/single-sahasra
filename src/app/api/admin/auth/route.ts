@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyAdminPassword, getAdminAuthToken } from '@/lib/auth';
 
-// Rate limiting state per IP (in-memory per serverless instance)
+// Rate limiting state per IP
 const attemptMap = new Map<string, { count: number; lockedUntil: number }>();
 
 export async function POST(req: Request) {
@@ -12,23 +12,23 @@ export async function POST(req: Request) {
     // Check rate limit lock
     const attempt = attemptMap.get(ip);
     if (attempt && attempt.lockedUntil > now) {
-      const waitSecs = Math.ceil((attempt.lockedUntil - now) / 1000);
       return NextResponse.json(
-        { success: false, error: `Too many attempts. Please wait ${waitSecs}s.` },
+        { success: false, error: 'Access Denied' },
         { status: 429 }
       );
     }
 
     const body = await req.json().catch(() => ({}));
-    const { password } = body;
+    const rawPassword = typeof body?.password === 'string' ? body.password : '';
+    const password = rawPassword.trim();
 
-    // Fast reject for empty or non-string inputs
-    if (!password || typeof password !== 'string') {
+    // Reject empty input
+    if (!password) {
       await new Promise((r) => setTimeout(r, 400));
       return NextResponse.json({ success: false, error: 'Access Denied' }, { status: 401 });
     }
 
-    // Verify password via cryptographic one-way salted hash (or custom env var)
+    // Verify password strictly
     const isMatch = verifyAdminPassword(password);
 
     if (isMatch) {
@@ -40,15 +40,15 @@ export async function POST(req: Request) {
       });
     }
 
-    // Track failed attempt
+    // Track failed attempts
     const current = attemptMap.get(ip) || { count: 0, lockedUntil: 0 };
     current.count += 1;
-    if (current.count >= 6) {
-      current.lockedUntil = now + 15 * 60 * 1000; // 15 min lock
+    if (current.count >= 8) {
+      current.lockedUntil = now + 10 * 60 * 1000; // 10 minute lock
     }
     attemptMap.set(ip, current);
 
-    // Artificial delay to prevent brute-force attacks
+    // Artificial delay to prevent brute-force
     await new Promise((r) => setTimeout(r, 400));
     return NextResponse.json({ success: false, error: 'Access Denied' }, { status: 401 });
   } catch {

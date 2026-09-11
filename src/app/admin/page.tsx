@@ -30,8 +30,9 @@ export default function AdminDashboardPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pinInput.trim()) {
-      setErrorMsg('Please enter the password.');
+    const trimmed = pinInput.trim();
+    if (!trimmed) {
+      setErrorMsg('Access Denied');
       return;
     }
 
@@ -42,7 +43,7 @@ export default function AdminDashboardPage() {
       const res = await fetch('/api/admin/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pinInput }),
+        body: JSON.stringify({ password: trimmed }),
       });
 
       const data = await res.json().catch(() => ({}));
