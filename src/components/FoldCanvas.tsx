@@ -151,15 +151,25 @@ export const FoldCanvas: React.FC = () => {
     setIsAndroid(isAndroidDevice);
     document.documentElement.classList.add(isMobile ? 'is-phone' : 'is-laptop');
 
-    // 6. Direct Auto-Popup for Install (Android & iPhone)
-    // If not already in standalone mode, prompt user to install
-    if (!isApp) {
+    // 6. Motion Permission & App Install Sequencing
+    const permState = inputController.getPermissionState();
+
+    if (isMobile && permState === 'prompt') {
+      // iPhone / Safari requires user gesture for motion permission
+      // Step 1: Prompt for motion permission immediately
       setTimeout(() => {
-        setShowInstallSheet(true);
-      }, 700);
+        setShowMotionSheet(true);
+      }, 500);
     } else {
-      // If already installed, show gentle gesture hint
-      if (isMobile) {
+      // Android / granted / desktop
+      if (permState === 'granted') {
+        inputController.requestMotionPermission().catch(() => {});
+      }
+      if (!isApp) {
+        setTimeout(() => {
+          setShowInstallSheet(true);
+        }, 700);
+      } else if (isMobile) {
         setHintText('Face the screen toward the sky, then roll the phone left or right.');
         setTimeout(() => setHintText(null), 6000);
       }
@@ -174,7 +184,7 @@ export const FoldCanvas: React.FC = () => {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      if (!isApp) {
+      if (!isApp && inputController.getPermissionState() !== 'prompt') {
         setShowInstallSheet(true);
       }
     };
@@ -231,6 +241,36 @@ export const FoldCanvas: React.FC = () => {
       setHintText('Face the screen toward the sky, then roll the phone left or right.');
       setTimeout(() => setHintText(null), 6000);
     }
+
+    // Step 2: Now that motion is handled, prompt for install if not already in standalone mode
+    const isApp =
+      typeof window !== 'undefined' &&
+      (Boolean((navigator as unknown as { standalone?: boolean }).standalone) ||
+        ['fullscreen', 'standalone', 'minimal-ui'].some((m) =>
+          window.matchMedia?.(`(display-mode: ${m})`)?.matches
+        ));
+
+    if (!isApp) {
+      setTimeout(() => {
+        setShowInstallSheet(true);
+      }, 800);
+    }
+  };
+
+  const handleDismissMotionSheet = () => {
+    setShowMotionSheet(false);
+    const isApp =
+      typeof window !== 'undefined' &&
+      (Boolean((navigator as unknown as { standalone?: boolean }).standalone) ||
+        ['fullscreen', 'standalone', 'minimal-ui'].some((m) =>
+          window.matchMedia?.(`(display-mode: ${m})`)?.matches
+        ));
+
+    if (!isApp) {
+      setTimeout(() => {
+        setShowInstallSheet(true);
+      }, 500);
+    }
   };
 
   // When install sheet is dismissed on iOS, check if motion permission needs prompting
@@ -257,7 +297,11 @@ export const FoldCanvas: React.FC = () => {
           if (pointerDownPos.current) {
             const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
             if (dist < 10) {
-              setIsChromeHidden((prev) => !prev);
+              if (inputControllerRef.current?.getPermissionState() === 'prompt') {
+                setShowMotionSheet(true);
+              } else {
+                setIsChromeHidden((prev) => !prev);
+              }
             }
           }
         }}
@@ -283,6 +327,7 @@ export const FoldCanvas: React.FC = () => {
       <MotionSheet
         isOpen={showMotionSheet}
         onAllow={handleAllowMotion}
+        onDismiss={handleDismissMotionSheet}
       />
 
       {/* Community / Social Popup (10 Seconds) */}
