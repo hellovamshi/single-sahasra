@@ -200,7 +200,84 @@ body {
   fill: #25D366;
 }
 
-/* Small "made by ainox.in" text */
+/* Cross-fading Brand Text (ainox.in & sahasra tech) */
+.brand-crossfade {
+  position: relative;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 105px;
+  pointer-events: auto;
+}
+
+.brand-crossfade .brand-link {
+  position: absolute;
+  right: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  padding-right: 4px;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.brand-crossfade .text-ainox {
+  color: rgb(255 255 255 / 0.6);
+  animation: crossfadeA 6s infinite ease-in-out;
+}
+
+.brand-crossfade .text-ainox:hover {
+  color: #fff;
+}
+
+.brand-crossfade .text-sahasra {
+  color: rgb(255 255 255 / 0.6);
+  animation: crossfadeB 6s infinite ease-in-out;
+}
+
+.brand-crossfade .text-sahasra:hover {
+  color: #fff;
+}
+
+@keyframes crossfadeA {
+  0%, 42% {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  48%, 94% {
+    opacity: 0;
+    transform: translateY(-5px);
+    pointer-events: none;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+}
+
+@keyframes crossfadeB {
+  0%, 42% {
+    opacity: 0;
+    transform: translateY(5px);
+    pointer-events: none;
+  }
+  48%, 94% {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(5px);
+    pointer-events: none;
+  }
+}
+
 .brand-subtext {
   font-size: 11px;
   font-weight: 500;

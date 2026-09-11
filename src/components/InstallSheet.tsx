@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { BrandCrossfade } from './BrandCrossfade';
 
 interface InstallSheetProps {
   isOpen: boolean;
@@ -65,14 +66,7 @@ export const InstallSheet: React.FC<InstallSheetProps> = ({
           >
             {isAndroid && canInstallDirectly ? 'Maybe Later' : 'Got it'}
           </button>
-          <a
-            className="sheet__credit ml-auto text-xs text-white/60 hover:text-white"
-            href="https://ainox.in"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            made by ainox.in
-          </a>
+          <BrandCrossfade />
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import { InputController } from '../motion/inputController';
 import { MotionSheet } from './MotionSheet';
 import { InstallSheet } from './InstallSheet';
 import { ChromeActions } from './ChromeActions';
+import { SocialPopup } from './SocialPopup';
 import { loadActiveImage } from '../storage/imageStorage';
 
 const DEFAULT_IMAGE_PATH = '/backgrounds/default.jpg';
@@ -20,6 +21,7 @@ export const FoldCanvas: React.FC = () => {
   const [isChromeHidden, setIsChromeHidden] = useState<boolean>(false);
   const [showMotionSheet, setShowMotionSheet] = useState<boolean>(false);
   const [showInstallSheet, setShowInstallSheet] = useState<boolean>(false);
+  const [showSocialPopup, setShowSocialPopup] = useState<boolean>(false);
   const [isAndroid, setIsAndroid] = useState<boolean>(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [hintText, setHintText] = useState<string | null>(null);
@@ -155,7 +157,13 @@ export const FoldCanvas: React.FC = () => {
     window.addEventListener('resize', handleResize, { passive: true });
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
+    // 8. Auto-popup after 10 seconds: Join WhatsApp / Follow Instagram
+    const socialTimer = setTimeout(() => {
+      setShowSocialPopup(true);
+    }, 10000);
+
     return () => {
+      clearTimeout(socialTimer);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
@@ -242,6 +250,12 @@ export const FoldCanvas: React.FC = () => {
       <MotionSheet
         isOpen={showMotionSheet}
         onAllow={handleAllowMotion}
+      />
+
+      {/* Community / Social Popup (10 Seconds) */}
+      <SocialPopup
+        isOpen={showSocialPopup}
+        onDismiss={() => setShowSocialPopup(false)}
       />
     </main>
   );

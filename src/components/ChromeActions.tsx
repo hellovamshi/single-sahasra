@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { trackVisit } from '../analytics/tracker';
+import { BrandCrossfade } from './BrandCrossfade';
 
 interface ChromeActionsProps {
   isHidden: boolean;
@@ -19,7 +20,7 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
 
   return (
     <>
-      {/* Bottom-Right WhatsApp Coin & ainox.in credit */}
+      {/* Bottom-Right WhatsApp Coin & Cross-fading credit (ainox.in & sahasra tech) */}
       <div className={`bottom-right-dock ${isHidden ? 'is-hidden' : ''}`}>
         <a
           className="whatsapp-coin glass"
@@ -34,14 +35,7 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
           </svg>
         </a>
 
-        <a
-          className="brand-subtext"
-          href="https://ainox.in"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          made by ainox.in
-        </a>
+        <BrandCrossfade />
       </div>
 
       {/* Floating Hint */}
