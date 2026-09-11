@@ -10,6 +10,8 @@ interface ChromeActionsProps {
   onUseDefault: () => void;
   onFullscreenClick: () => void;
   fullscreenLabel: string;
+  isLaptop?: boolean;
+  onOpenPhoneModal?: () => void;
 }
 
 export const ChromeActions: React.FC<ChromeActionsProps> = ({
@@ -20,6 +22,8 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
   onUseDefault,
   onFullscreenClick,
   fullscreenLabel,
+  isLaptop,
+  onOpenPhoneModal,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,6 +78,16 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
           >
             {fullscreenLabel}
           </button>
+
+          {isLaptop && onOpenPhoneModal && (
+            <button
+              className="pill glass"
+              type="button"
+              onClick={onOpenPhoneModal}
+            >
+              📱 Open on phone
+            </button>
+          )}
         </div>
 
         {/* Floating Hint */}

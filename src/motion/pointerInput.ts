@@ -22,8 +22,12 @@ export class PointerInputManager {
     window.addEventListener('pointerup', this.onPointerUp, { passive: true });
     window.addEventListener('pointercancel', this.onPointerUp, { passive: true });
 
+    // Trackpad scroll / mouse wheel support for laptop/desktop
+    window.addEventListener('wheel', this.onWheel, { passive: true });
+
     // Keyboard support for accessibility
     window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
   }
 
   public detach(): void {
@@ -33,7 +37,9 @@ export class PointerInputManager {
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('pointercancel', this.onPointerUp);
+    window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
     this.listeners.clear();
   }
 
@@ -137,6 +143,31 @@ export class PointerInputManager {
     }
   };
 
+  private onKeyUp = (e: KeyboardEvent): void => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      // Spring back to flat on key release
+      this.notifyKeyboardState('LEFT', 0.0, 0);
+    }
+  };
+
+  private wheelAmount: number = 0;
+  private onWheel = (e: WheelEvent): void => {
+    if (!this.isEnabled) return;
+    // DeltaY maps to fold amount (-1 to 1)
+    this.wheelAmount = clamp(this.wheelAmount + e.deltaY * 0.0018, -1.0, 1.0);
+    const foldAmount = Math.abs(this.wheelAmount);
+    const hingeDirection: HingeDirection = this.wheelAmount >= 0 ? 'LEFT' : 'RIGHT';
+
+    const state: FoldInputState = {
+      foldAmount,
+      hingeDirection,
+      tiltAngle: this.wheelAmount * 45,
+      isInteracting: foldAmount > 0.001,
+      source: 'pointer',
+    };
+    this.listeners.forEach((listener) => listener(state));
+  };
+
   private notifyKeyboardState(
     hingeDirection: HingeDirection,
     foldAmount: number,
@@ -146,7 +177,7 @@ export class PointerInputManager {
       foldAmount,
       hingeDirection,
       tiltAngle,
-      isInteracting: true,
+      isInteracting: foldAmount > 0.001,
       source: 'keyboard',
     };
     this.listeners.forEach((listener) => {

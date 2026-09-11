@@ -6,6 +6,7 @@ import { InputController } from '../motion/inputController';
 import { MotionSheet } from './MotionSheet';
 import { InstallSheet } from './InstallSheet';
 import { ChromeActions } from './ChromeActions';
+import { DesktopQRModal } from './DesktopQRModal';
 import { saveActiveImage, loadActiveImage, clearActiveImage } from '../storage/imageStorage';
 
 const DEFAULT_IMAGE_PATH = '/backgrounds/default.jpg';
@@ -22,6 +23,9 @@ export const FoldCanvas: React.FC = () => {
   const [isChromeHidden, setIsChromeHidden] = useState<boolean>(false);
   const [showMotionSheet, setShowMotionSheet] = useState<boolean>(false);
   const [showInstallSheet, setShowInstallSheet] = useState<boolean>(false);
+  const [showQRModal, setShowQRModal] = useState<boolean>(false);
+  const [isLaptop, setIsLaptop] = useState<boolean>(false);
+  const [currentUrl, setCurrentUrl] = useState<string>('https://single.sahasra.tech');
   const [hintText, setHintText] = useState<string | null>(null);
   const [fullscreenLabel, setFullscreenLabel] = useState<string>('Fullscreen');
 
@@ -113,18 +117,33 @@ export const FoldCanvas: React.FC = () => {
       return inputController.update(0.016);
     });
 
-    // 5. Sensor and onboarding checks for mobile
-    const permState = inputController.getPermissionState();
-    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    // 5. Automatic Device Detection (Mobile vs Laptop/Desktop)
+    const ua = navigator.userAgent || '';
+    const isMobileUA = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const isFinePointer = window.matchMedia?.('(pointer: fine)').matches && navigator.maxTouchPoints === 0;
+    const isMobile = isMobileUA || (hasTouch && !isFinePointer);
 
-    if (isTouch) {
+    setIsLaptop(!isMobile);
+    document.documentElement.classList.add(isMobile ? 'is-phone' : 'is-laptop');
+
+    if (typeof window !== 'undefined') {
+      setCurrentUrl(window.location.href);
+    }
+
+    if (isMobile) {
+      const permState = inputController.getPermissionState();
       if (permState === 'prompt') {
         setShowMotionSheet(true);
       } else {
-        // Android or granted: show hint
+        // Android or already granted: show hint
         setHintText('Face the screen toward the sky, then roll the phone left or right.');
         setTimeout(() => setHintText(null), 6000);
       }
+    } else {
+      // Desktop / Laptop mode: show mouse/trackpad fold hint
+      setHintText('Scroll trackpad, drag with mouse, or use ← → arrow keys to fold.');
+      setTimeout(() => setHintText(null), 8000);
     }
 
     // Resize handler
@@ -241,18 +260,27 @@ export const FoldCanvas: React.FC = () => {
         onUseDefault={handleUseDefault}
         onFullscreenClick={handleFullscreenClick}
         fullscreenLabel={fullscreenLabel}
+        isLaptop={isLaptop}
+        onOpenPhoneModal={() => setShowQRModal(true)}
       />
 
-      {/* Step 1: Motion Permission Dialog */}
+      {/* Step 1: Motion Permission Dialog (Mobile Only) */}
       <MotionSheet
         isOpen={showMotionSheet}
         onAllow={handleAllowMotion}
       />
 
-      {/* Step 2: Add to Home Screen Dialog */}
+      {/* Step 2: Add to Home Screen Dialog (Mobile Only) */}
       <InstallSheet
         isOpen={showInstallSheet}
         onDismiss={() => setShowInstallSheet(false)}
+      />
+
+      {/* Desktop / Laptop: Scan to Open on Phone Modal */}
+      <DesktopQRModal
+        isOpen={showQRModal}
+        onDismiss={() => setShowQRModal(false)}
+        url={currentUrl}
       />
     </main>
   );
