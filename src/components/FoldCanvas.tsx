@@ -22,7 +22,7 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
 
   const reducedMotion = useReducedMotion();
 
-  // Non-rendering UI states
+  // Motion and UI states
   const [permissionState, setPermissionState] = useState<PermissionState>('granted');
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [motionActive, setMotionActive] = useState(false);
@@ -31,6 +31,31 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
 
   // Manual fold override for reduced motion or testing
   const manualFoldRef = useRef<{ hinge: HingeDirection; amount: number } | null>(null);
+
+  // Request iOS motion permission
+  const handleEnableMotion = useCallback(async () => {
+    if (!inputControllerRef.current) return;
+    try {
+      const granted = await inputControllerRef.current.requestMotionPermission();
+      if (granted) {
+        setPermissionState('granted');
+        setShowPermissionModal(false);
+        setMotionActive(true);
+        setInstructionText('Roll your phone left or right');
+      } else {
+        setPermissionState('denied');
+        setShowPermissionModal(false);
+        setInstructionText('Swipe horizontally to fold');
+      }
+    } catch (err) {
+      console.warn('Error enabling motion:', err);
+    }
+  }, []);
+
+  const handleDismissPermission = useCallback(() => {
+    setShowPermissionModal(false);
+    setInstructionText('Swipe horizontally to fold');
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -44,11 +69,20 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
     // Check device motion permission status
     const initialPerm = inputController.getPermissionState();
     setPermissionState(initialPerm);
+
     if (initialPerm === 'prompt') {
       setShowPermissionModal(true);
     }
 
-    // Adapt instruction text for desktop vs mobile
+    // Subscribe to active motion detection
+    const unsubscribeMotion = inputController.onMotionActiveChange((active) => {
+      setMotionActive(active);
+      if (active) {
+        setInstructionText('Roll your phone left or right');
+      }
+    });
+
+    // Detect touch device
     const isTouchDevice =
       typeof window !== 'undefined' &&
       ('ontouchstart' in window || navigator.maxTouchPoints > 0);
@@ -81,7 +115,6 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
 
       // Start decoupled 60 FPS animation loop
       renderer.start(() => {
-        // If reduced motion manual override is set, use it
         if (manualFoldRef.current) {
           return {
             foldAmount: manualFoldRef.current.amount,
@@ -92,7 +125,6 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
           };
         }
 
-        // Otherwise get smoothed sensor/pointer state
         const state = inputController.update(0.016);
         return state;
       });
@@ -110,9 +142,19 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
     window.addEventListener('resize', handleResize, { passive: true });
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
+    // Optional user gesture fallback: tapping canvas triggers permission if still prompt
+    const handleCanvasTap = () => {
+      if (inputController.getPermissionState() === 'prompt') {
+        handleEnableMotion();
+      }
+    };
+    canvas.addEventListener('click', handleCanvasTap, { once: true });
+
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
+      canvas.removeEventListener('click', handleCanvasTap);
+      unsubscribeMotion();
 
       if (rendererRef.current) {
         rendererRef.current.destroy();
@@ -124,28 +166,7 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
         inputControllerRef.current = null;
       }
     };
-  }, [image]);
-
-  // Request iOS motion permission
-  const handleEnableMotion = async () => {
-    if (!inputControllerRef.current) return;
-    const granted = await inputControllerRef.current.requestMotionPermission();
-    if (granted) {
-      setPermissionState('granted');
-      setShowPermissionModal(false);
-      setMotionActive(true);
-      setInstructionText('Roll your phone left or right');
-    } else {
-      setPermissionState('denied');
-      setShowPermissionModal(false);
-      setInstructionText('Swipe or drag horizontally to fold');
-    }
-  };
-
-  const handleDismissPermission = () => {
-    setShowPermissionModal(false);
-    setInstructionText('Swipe or drag horizontally to fold');
-  };
+  }, [image, handleEnableMotion]);
 
   const handleReset = useCallback(() => {
     manualFoldRef.current = null;
@@ -184,6 +205,8 @@ export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) 
         instructionText={instructionText}
         reducedMotion={reducedMotion}
         onManualFoldChange={handleManualFoldChange}
+        onEnableMotion={handleEnableMotion}
+        showEnableMotionButton={!motionActive && permissionState === 'prompt'}
       />
 
       {/* WebGL Error fallback */}

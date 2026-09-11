@@ -1,5 +1,5 @@
 /**
- * Unified Input Controller that blends DeviceOrientation, Pointer, Touch,
+ * Unified Input Controller that blends DeviceOrientation, DeviceMotion, Pointer, Touch,
  * and Keyboard inputs into a butter-smooth, jitter-free folding state.
  */
 
@@ -25,10 +25,10 @@ export class InputController {
   // Mode tracking
   private activeInputSource: 'motion' | 'pointer' | 'touch' | 'keyboard' = 'pointer';
   private hasActiveMotion: boolean = false;
-  private motionTimeoutId: number | null = null;
+  private motionListeners: Set<(active: boolean) => void> = new Set();
 
   // Smoothing factor (lerp per frame)
-  private readonly smoothingFactor: number = 0.12;
+  private readonly smoothingFactor: number = 0.14;
 
   constructor() {
     this.orientationManager = new DeviceOrientationManager();
@@ -37,23 +37,27 @@ export class InputController {
     // Subscribe to orientation updates
     this.orientationManager.subscribe((data) => {
       if (data.available) {
-        this.hasActiveMotion = true;
+        if (!this.hasActiveMotion) {
+          this.hasActiveMotion = true;
+          this.motionListeners.forEach((fn) => fn(true));
+        }
         this.activeInputSource = 'motion';
         this.targetFoldAmount = data.foldAmount;
         this.targetHingeDirection = data.hingeDirection;
         this.targetTiltAngle = data.rollAngle;
-
-        // Clear pointer priority timeout
-        if (this.motionTimeoutId) {
-          clearTimeout(this.motionTimeoutId);
-        }
       }
     });
 
     // Subscribe to pointer updates
     this.pointerManager.subscribe((state) => {
-      // If user is actively touching or moving pointer, prioritize pointer
-      if (state.isInteracting || !this.hasActiveMotion) {
+      // If user is actively touching or dragging, prioritize touch/drag
+      if (state.isInteracting) {
+        this.activeInputSource = state.source;
+        this.targetFoldAmount = state.foldAmount;
+        this.targetHingeDirection = state.hingeDirection;
+        this.targetTiltAngle = state.tiltAngle;
+      } else if (!this.hasActiveMotion) {
+        // Desktop mouse hover when no motion sensors are present
         this.activeInputSource = state.source;
         this.targetFoldAmount = state.foldAmount;
         this.targetHingeDirection = state.hingeDirection;
@@ -69,14 +73,30 @@ export class InputController {
   public detach(): void {
     this.pointerManager.detach();
     this.orientationManager.destroy();
+    this.motionListeners.clear();
   }
 
   public getPermissionState(): PermissionState {
     return this.orientationManager.getPermissionState();
   }
 
+  public onMotionActiveChange(callback: (active: boolean) => void): () => void {
+    this.motionListeners.add(callback);
+    callback(this.hasActiveMotion);
+    return () => this.motionListeners.delete(callback);
+  }
+
+  public isMotionActive(): boolean {
+    return this.hasActiveMotion;
+  }
+
   public async requestMotionPermission(): Promise<boolean> {
-    return this.orientationManager.requestPermission();
+    const granted = await this.orientationManager.requestPermission();
+    if (granted) {
+      this.hasActiveMotion = true;
+      this.motionListeners.forEach((fn) => fn(true));
+    }
+    return granted;
   }
 
   public reset(): void {

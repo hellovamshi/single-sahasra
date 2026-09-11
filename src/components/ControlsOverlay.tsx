@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { RotateCcw, Image as ImageIcon, Sliders } from 'lucide-react';
+import { RotateCcw, Image as ImageIcon, Sliders, Smartphone } from 'lucide-react';
 import { HingeDirection } from '../motion/types';
 
 interface ControlsOverlayProps {
@@ -11,6 +11,8 @@ interface ControlsOverlayProps {
   instructionText?: string;
   reducedMotion?: boolean;
   onManualFoldChange?: (hinge: HingeDirection, amount: number) => void;
+  onEnableMotion?: () => void;
+  showEnableMotionButton?: boolean;
 }
 
 export const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
@@ -20,12 +22,14 @@ export const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
   instructionText,
   reducedMotion = false,
   onManualFoldChange,
+  onEnableMotion,
+  showEnableMotionButton = false,
 }) => {
   const [showHint, setShowHint] = useState(true);
   const [manualAmount, setManualAmount] = useState(0);
   const [manualHinge, setManualHinge] = useState<HingeDirection>('LEFT');
 
-  // Auto-hide the hint after 4 seconds
+  // Auto-hide the hint after 4.5 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowHint(false);
@@ -46,16 +50,27 @@ export const ControlsOverlay: React.FC<ControlsOverlayProps> = ({
 
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-6 select-none z-30">
-      {/* Top instruction pill */}
-      <div className="flex justify-center pt-2">
+      {/* Top instruction pill or Enable Motion prompt */}
+      <div className="flex flex-col items-center gap-2 pt-2">
         {showHint && instructionText && (
           <div
             role="status"
             aria-live="polite"
-            className="pointer-events-auto px-4 py-2 rounded-full bg-neutral-900/70 border border-neutral-800/80 text-xs tracking-wider text-neutral-300 backdrop-blur-md transition-opacity duration-1000 animate-fade-in shadow-lg"
+            className="pointer-events-auto px-4 py-2 rounded-full bg-neutral-900/80 border border-neutral-800/80 text-xs tracking-wider text-neutral-300 backdrop-blur-md transition-opacity duration-1000 animate-fade-in shadow-lg flex items-center gap-2"
           >
-            {instructionText}
+            {isMotionActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+            <span>{instructionText}</span>
           </div>
+        )}
+
+        {showEnableMotionButton && onEnableMotion && (
+          <button
+            onClick={onEnableMotion}
+            className="pointer-events-auto px-4 py-2 rounded-full bg-white text-black text-xs font-medium tracking-wide shadow-xl flex items-center gap-2 hover:bg-neutral-200 transition-all active:scale-95 animate-fade-in"
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Enable phone tilt</span>
+          </button>
         )}
       </div>
 

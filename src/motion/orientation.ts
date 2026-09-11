@@ -1,5 +1,5 @@
 /**
- * Device orientation sensor manager for mobile phones.
+ * Device orientation and motion sensor manager for mobile phones.
  * Accurately tracks device roll/tilt, manages iOS permissions,
  * and maintains calibration baselines.
  */
@@ -12,9 +12,10 @@ export interface OrientationData {
   hingeDirection: HingeDirection;
   rollAngle: number;
   available: boolean;
+  rawGamma?: number;
 }
 
-const MAX_TILT_ANGLE = 50.0; // Degrees tilt for maximum fold
+const MAX_TILT_ANGLE = 45.0; // Degrees tilt for maximum fold
 const DEAD_ZONE = 2.0; // Ignore tiny micro-jitters near neutral
 
 export class DeviceOrientationManager {
@@ -24,30 +25,42 @@ export class DeviceOrientationManager {
   private hasReceivedData: boolean = false;
   private permissionState: PermissionState = 'prompt';
   private listeners: Set<(data: OrientationData) => void> = new Set();
+  private lastEventType: string = '';
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.checkInitialSupport();
       this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
+
+      // If permission is already granted (Android, Desktop, non-permission iOS), start listening immediately!
+      if (this.permissionState === 'granted') {
+        this.start();
+      }
     }
   }
 
   public checkInitialSupport(): PermissionState {
     if (typeof window === 'undefined') return 'unsupported';
 
-    // iOS 13+ requires explicit user permission request
-    if (
+    // iOS 13+ requires explicit user gesture permission request
+    const hasOrientationPermission =
       typeof DeviceOrientationEvent !== 'undefined' &&
       typeof (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> })
-        .requestPermission === 'function'
-    ) {
+        .requestPermission === 'function';
+
+    const hasMotionPermission =
+      typeof DeviceMotionEvent !== 'undefined' &&
+      typeof (DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> })
+        .requestPermission === 'function';
+
+    if (hasOrientationPermission || hasMotionPermission) {
       this.permissionState = 'prompt';
       return 'prompt';
     }
 
-    // Android and browsers without permission gate
-    if ('DeviceOrientationEvent' in window) {
+    // Android and standard mobile browsers
+    if ('DeviceOrientationEvent' in window || 'DeviceMotionEvent' in window) {
       this.permissionState = 'granted';
       return 'granted';
     }
@@ -60,50 +73,83 @@ export class DeviceOrientationManager {
     return this.permissionState;
   }
 
+  public hasData(): boolean {
+    return this.hasReceivedData;
+  }
+
   public async requestPermission(): Promise<boolean> {
     if (typeof window === 'undefined') return false;
 
-    const deviceOrientation = DeviceOrientationEvent as unknown as {
+    let granted = false;
+
+    // 1. Request DeviceOrientationEvent on iOS
+    const orientationClass = DeviceOrientationEvent as unknown as {
       requestPermission?: () => Promise<string>;
     };
 
-    if (typeof deviceOrientation.requestPermission === 'function') {
+    if (typeof orientationClass.requestPermission === 'function') {
       try {
-        const response = await deviceOrientation.requestPermission();
+        const response = await orientationClass.requestPermission();
         if (response === 'granted') {
-          this.permissionState = 'granted';
-          this.start();
-          return true;
-        } else {
-          this.permissionState = 'denied';
-          return false;
+          granted = true;
         }
       } catch (err) {
-        console.warn('DeviceOrientation permission request failed:', err);
-        this.permissionState = 'denied';
-        return false;
+        console.warn('DeviceOrientationEvent.requestPermission failed:', err);
       }
-    } else if ('DeviceOrientationEvent' in window) {
+    }
+
+    // 2. Request DeviceMotionEvent on iOS
+    const motionClass = DeviceMotionEvent as unknown as {
+      requestPermission?: () => Promise<string>;
+    };
+
+    if (typeof motionClass.requestPermission === 'function') {
+      try {
+        const response = await motionClass.requestPermission();
+        if (response === 'granted') {
+          granted = true;
+        }
+      } catch (err) {
+        console.warn('DeviceMotionEvent.requestPermission failed:', err);
+      }
+    }
+
+    // 3. Fallback for browsers without permission gate (Android Chrome)
+    if (!orientationClass.requestPermission && !motionClass.requestPermission) {
+      granted = 'DeviceOrientationEvent' in window || 'DeviceMotionEvent' in window;
+    }
+
+    if (granted) {
       this.permissionState = 'granted';
       this.start();
       return true;
+    } else {
+      this.permissionState = 'denied';
+      return false;
     }
-
-    this.permissionState = 'unsupported';
-    return false;
   }
 
   public start(): void {
     if (this.isListening || typeof window === 'undefined') return;
 
-    window.addEventListener('deviceorientation', this.handleOrientation, true);
     this.isListening = true;
+
+    // Listen to standard deviceorientation
+    window.addEventListener('deviceorientation', this.handleOrientation, true);
+
+    // Also listen to deviceorientationabsolute (used by some Android Chrome versions)
+    window.addEventListener('deviceorientationabsolute', this.handleOrientation, true);
+
+    // Also listen to devicemotion as a reliable accelerometer backup
+    window.addEventListener('devicemotion', this.handleMotion, true);
   }
 
   public stop(): void {
     if (!this.isListening || typeof window === 'undefined') return;
 
     window.removeEventListener('deviceorientation', this.handleOrientation, true);
+    window.removeEventListener('deviceorientationabsolute', this.handleOrientation, true);
+    window.removeEventListener('devicemotion', this.handleMotion, true);
     this.isListening = false;
   }
 
@@ -121,17 +167,17 @@ export class DeviceOrientationManager {
   }
 
   private handleOrientation = (event: DeviceOrientationEvent): void => {
-    if (event.gamma === null || isNaN(event.gamma)) return;
+    if (event.gamma === null || event.gamma === undefined || isNaN(event.gamma)) return;
 
     this.hasReceivedData = true;
+    this.lastEventType = 'orientation';
     this.currentGamma = event.gamma;
 
-    // First reading initializes the baseline
+    // Initialize baseline on first reading
     if (this.baselineGamma === null) {
       this.baselineGamma = this.currentGamma;
     }
 
-    // Calculate delta relative to baseline
     const delta = this.currentGamma - this.baselineGamma;
     const absDelta = Math.abs(delta);
 
@@ -140,8 +186,8 @@ export class DeviceOrientationManager {
 
     if (absDelta > DEAD_ZONE) {
       foldAmount = clamp((absDelta - DEAD_ZONE) / (MAX_TILT_ANGLE - DEAD_ZONE), 0, 1);
-      // If phone tilts right (gamma > baseline): hinge is LEFT, folds inward from right
-      // If phone tilts left (gamma < baseline): hinge is RIGHT, folds inward from left
+      // Tilting right (gamma > baseline): fold from right around LEFT hinge
+      // Tilting left (gamma < baseline): fold from left around RIGHT hinge
       hingeDirection = delta > 0 ? 'LEFT' : 'RIGHT';
     }
 
@@ -150,6 +196,54 @@ export class DeviceOrientationManager {
       hingeDirection,
       rollAngle: delta,
       available: true,
+      rawGamma: this.currentGamma,
+    };
+
+    this.listeners.forEach((listener) => {
+      listener(data);
+    });
+  };
+
+  /**
+   * DeviceMotion accelerometer backup if deviceorientation is not emitting
+   */
+  private handleMotion = (event: DeviceMotionEvent): void => {
+    // If deviceorientation is already providing valid data, prefer it
+    if (this.lastEventType === 'orientation') return;
+
+    const acc = event.accelerationIncludingGravity;
+    if (!acc || acc.x === null || acc.x === undefined || isNaN(acc.x)) return;
+
+    this.hasReceivedData = true;
+
+    // acc.x roughly corresponds to -sin(roll) * 9.8 or +sin(roll) * 9.8
+    // Estimate roll angle in degrees (-90 to +90)
+    const normalizedX = clamp(acc.x / 9.8, -1, 1);
+    const estimatedAngle = -Math.asin(normalizedX) * (180 / Math.PI);
+
+    this.currentGamma = estimatedAngle;
+
+    if (this.baselineGamma === null) {
+      this.baselineGamma = this.currentGamma;
+    }
+
+    const delta = this.currentGamma - this.baselineGamma;
+    const absDelta = Math.abs(delta);
+
+    let foldAmount = 0;
+    let hingeDirection: HingeDirection = 'LEFT';
+
+    if (absDelta > DEAD_ZONE) {
+      foldAmount = clamp((absDelta - DEAD_ZONE) / (MAX_TILT_ANGLE - DEAD_ZONE), 0, 1);
+      hingeDirection = delta > 0 ? 'LEFT' : 'RIGHT';
+    }
+
+    const data: OrientationData = {
+      foldAmount,
+      hingeDirection,
+      rollAngle: delta,
+      available: true,
+      rawGamma: this.currentGamma,
     };
 
     this.listeners.forEach((listener) => {
@@ -159,13 +253,10 @@ export class DeviceOrientationManager {
 
   private handleVisibilityChange(): void {
     if (document.hidden) {
-      // Temporarily pause listening when tab is hidden
-      if (this.isListening) {
-        window.removeEventListener('deviceorientation', this.handleOrientation, true);
-      }
+      this.stop();
     } else {
-      if (this.isListening) {
-        window.addEventListener('deviceorientation', this.handleOrientation, true);
+      if (this.permissionState === 'granted') {
+        this.start();
       }
     }
   }
