@@ -1,6 +1,6 @@
 /**
  * Production-ready WebGL 2 Fold Renderer.
- * High-performance, 60 FPS animation loop, perspective hinge simulation,
+ * High-performance, 60 FPS animation loop, seamless glass fold simulation,
  * progressive mip-blur, and memory leak prevention.
  */
 
@@ -31,7 +31,9 @@ export class FoldRenderer {
   private uMvMatrixLoc: WebGLUniformLocation | null = null;
   private uFoldAmountLoc: WebGLUniformLocation | null = null;
   private uHingeLoc: WebGLUniformLocation | null = null;
-  private uImageAspectLoc: WebGLUniformLocation | null = null;
+  private uScreenSizeLoc: WebGLUniformLocation | null = null;
+  private uUvScaleLoc: WebGLUniformLocation | null = null;
+  private uUvOffsetLoc: WebGLUniformLocation | null = null;
   private uMaxLodLoc: WebGLUniformLocation | null = null;
   private uTiltAngleLoc: WebGLUniformLocation | null = null;
   private uResolutionLoc: WebGLUniformLocation | null = null;
@@ -90,9 +92,14 @@ export class FoldRenderer {
     const gl = this.gl;
     if (!gl) return;
 
-    // Enable depth test & backface culling
+    // Enable depth test, backface culling, and alpha blending for seamless glass feathering
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
+
+    // Alpha blending enables soft glass dissolution into the dark void
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // Premultiplied alpha for silky blending
+
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
     // Compile and link shaders
@@ -104,7 +111,9 @@ export class FoldRenderer {
     this.uMvMatrixLoc = gl.getUniformLocation(this.program, 'u_modelViewMatrix');
     this.uFoldAmountLoc = gl.getUniformLocation(this.program, 'u_foldAmount');
     this.uHingeLoc = gl.getUniformLocation(this.program, 'u_hinge');
-    this.uImageAspectLoc = gl.getUniformLocation(this.program, 'u_imageAspect');
+    this.uScreenSizeLoc = gl.getUniformLocation(this.program, 'u_screenSize');
+    this.uUvScaleLoc = gl.getUniformLocation(this.program, 'u_uvScale');
+    this.uUvOffsetLoc = gl.getUniformLocation(this.program, 'u_uvOffset');
     this.uMaxLodLoc = gl.getUniformLocation(this.program, 'u_maxLod');
     this.uTiltAngleLoc = gl.getUniformLocation(this.program, 'u_tiltAngle');
     this.uResolutionLoc = gl.getUniformLocation(this.program, 'u_resolution');
@@ -113,12 +122,12 @@ export class FoldRenderer {
     // Bind texture unit 0
     gl.uniform1i(this.uTextureLoc, 0);
 
-    // Create subdivided mesh (256 horizontal columns for buttery fold geometry)
+    // Create subdivided mesh (256 horizontal columns for buttery curved glass fold)
     this.mesh = createSubdividedMesh(gl, 256, 4);
 
     // Setup ModelView matrix (Camera placed back on Z)
     this.modelViewMatrix = createIdentityMatrix();
-    this.modelViewMatrix[14] = -this.cameraZ; // translate z = -2.4
+    this.modelViewMatrix[14] = -this.cameraZ;
 
     // If there was a pending image texture, upload now
     if (this.pendingSource) {
@@ -133,7 +142,6 @@ export class FoldRenderer {
       return;
     }
 
-    // Delete existing texture to prevent memory leak
     if (this.activeTexture) {
       deleteTexture(gl, this.activeTexture);
       this.activeTexture = null;
@@ -147,7 +155,6 @@ export class FoldRenderer {
     const gl = this.gl;
     if (!gl) return;
 
-    // Cap devicePixelRatio at 2.0 to balance crispness and mobile GPU thermal/battery life
     const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
     const displayWidth = Math.floor(this.canvas.clientWidth * dpr);
     const displayHeight = Math.floor(this.canvas.clientHeight * dpr);
@@ -206,29 +213,38 @@ export class FoldRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(this.program);
 
-    // Compute edge-to-edge aspect ratio fitting
-    // Visible world dimensions at plane Z=0:
+    // Visible camera frustum dimensions at plane Z = 0
     const halfVisibleHeight = this.cameraZ * Math.tan(this.cameraFov / 2);
     const halfVisibleWidth = halfVisibleHeight * (this.canvas.width / this.canvas.height);
 
-    // Edge-to-edge full bleed coverage calculation
+    // Full-bleed aspect cover calculation:
+    // Guarantees the mesh matches the physical phone screen edge-to-edge
+    // with no cutting, margins, or letterboxing
+    const screenAspect = this.canvas.width / this.canvas.height;
     const imgAspect = this.activeTexture.aspectRatio;
-    const viewAspect = this.canvas.width / this.canvas.height;
 
-    let scaleX = halfVisibleWidth;
-    let scaleY = scaleX / imgAspect;
+    let uvScaleX = 1.0;
+    let uvScaleY = 1.0;
 
-    if (scaleY < halfVisibleHeight) {
-      scaleY = halfVisibleHeight;
-      scaleX = scaleY * imgAspect;
+    if (screenAspect > imgAspect) {
+      // Screen is wider than image (landscape/tablet)
+      uvScaleY = imgAspect / screenAspect;
+    } else {
+      // Screen is taller than image (portrait phone)
+      uvScaleX = screenAspect / imgAspect;
     }
+
+    const uvOffsetX = (1.0 - uvScaleX) * 0.5;
+    const uvOffsetY = (1.0 - uvScaleY) * 0.5;
 
     // Pass uniforms
     gl.uniformMatrix4fv(this.uProjMatrixLoc, false, this.projectionMatrix);
     gl.uniformMatrix4fv(this.uMvMatrixLoc, false, this.modelViewMatrix);
     gl.uniform1f(this.uFoldAmountLoc, inputState.foldAmount);
     gl.uniform1i(this.uHingeLoc, inputState.hingeDirection === 'LEFT' ? 0 : 1);
-    gl.uniform2f(this.uImageAspectLoc, scaleX, scaleY);
+    gl.uniform2f(this.uScreenSizeLoc, halfVisibleWidth, halfVisibleHeight);
+    gl.uniform2f(this.uUvScaleLoc, uvScaleX, uvScaleY);
+    gl.uniform2f(this.uUvOffsetLoc, uvOffsetX, uvOffsetY);
     gl.uniform1f(this.uMaxLodLoc, this.activeTexture.maxLod);
     gl.uniform1f(this.uTiltAngleLoc, inputState.tiltAngle);
     gl.uniform2f(this.uResolutionLoc, this.canvas.width, this.canvas.height);

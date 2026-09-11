@@ -12,46 +12,48 @@ uniform mat4 u_projectionMatrix;
 uniform mat4 u_modelViewMatrix;
 uniform float u_foldAmount;
 uniform int u_hinge;
-uniform vec2 u_imageAspect;
+uniform vec2 u_screenSize;
+uniform vec2 u_uvScale;
+uniform vec2 u_uvOffset;
 
 out vec2 v_uv;
 out vec3 v_normal;
 out vec3 v_viewPosition;
 out float v_hingeDistance;
 out float v_foldAmount;
+out vec2 v_gridUv;
 
-const float MAX_FOLD_ANGLE = 1.38; // ~79 degrees maximum fold
+const float MAX_FOLD_ANGLE = 1.42;
 
 void main() {
-    v_uv = a_uv;
+    v_gridUv = a_uv;
+    v_uv = a_uv * u_uvScale + u_uvOffset;
     v_foldAmount = u_foldAmount;
+
+    float xBase = a_position.x * u_screenSize.x;
+    float yBase = a_position.y * u_screenSize.y;
 
     float s = (u_hinge == 0) ? a_uv.x : (1.0 - a_uv.x);
     v_hingeDistance = s;
 
-    float bendRadius = 0.15;
-    float bendFactor = smoothstep(0.0, bendRadius, s);
-    float angle = u_foldAmount * MAX_FOLD_ANGLE * bendFactor;
-
-    float xBase = a_position.x * u_imageAspect.x;
-    float yBase = a_position.y * u_imageAspect.y;
+    float bendAngle = u_foldAmount * MAX_FOLD_ANGLE * pow(s, 1.15);
 
     vec3 localPos = vec3(xBase, yBase, 0.0);
     vec3 normal = vec3(0.0, 0.0, 1.0);
 
     if (u_foldAmount > 0.0001) {
         if (u_hinge == 0) {
-            float hingeX = -u_imageAspect.x;
+            float hingeX = -u_screenSize.x;
             float distFromHinge = localPos.x - hingeX;
-            localPos.x = hingeX + distFromHinge * cos(angle);
-            localPos.z = -distFromHinge * sin(angle);
-            normal = vec3(sin(angle), 0.0, cos(angle));
+            localPos.x = hingeX + distFromHinge * cos(bendAngle);
+            localPos.z = -distFromHinge * sin(bendAngle) * 1.2;
+            normal = vec3(sin(bendAngle), 0.0, cos(bendAngle));
         } else {
-            float hingeX = u_imageAspect.x;
+            float hingeX = u_screenSize.x;
             float distFromHinge = hingeX - localPos.x;
-            localPos.x = hingeX - distFromHinge * cos(angle);
-            localPos.z = -distFromHinge * sin(angle);
-            normal = vec3(-sin(angle), 0.0, cos(angle));
+            localPos.x = hingeX - distFromHinge * cos(bendAngle);
+            localPos.z = -distFromHinge * sin(bendAngle) * 1.2;
+            normal = vec3(-sin(bendAngle), 0.0, cos(bendAngle));
         }
     }
 
@@ -71,6 +73,7 @@ in vec3 v_normal;
 in vec3 v_viewPosition;
 in float v_hingeDistance;
 in float v_foldAmount;
+in vec2 v_gridUv;
 
 uniform sampler2D u_texture;
 uniform float u_maxLod;
@@ -80,54 +83,59 @@ uniform vec2 u_resolution;
 out vec4 fragColor;
 
 void main() {
-    if (v_uv.x < 0.0 || v_uv.x > 1.0 || v_uv.y < 0.0 || v_uv.y > 1.0) {
-        discard;
-    }
+    float s = clamp(v_hingeDistance, 0.0, 1.0);
 
-    float d = clamp(v_hingeDistance, 0.0, 1.0);
-
-    // 1. Progressive mip-blur with multi-tap jitter
-    float blurIntensity = pow(d, 1.35) * v_foldAmount;
+    float blurIntensity = pow(s, 1.35) * v_foldAmount;
     float targetLod = blurIntensity * u_maxLod;
 
-    vec4 color = vec4(0.0);
-    float offsetScale = blurIntensity * 0.005;
+    float disp = blurIntensity * 0.0045;
+    vec2 offsetR = vec2(disp, disp * 0.5);
+    vec2 offsetB = vec2(-disp, -disp * 0.5);
 
-    color += textureLod(u_texture, v_uv, targetLod) * 0.40;
-    color += textureLod(u_texture, v_uv + vec2(offsetScale, offsetScale), targetLod) * 0.15;
-    color += textureLod(u_texture, v_uv + vec2(-offsetScale, offsetScale), targetLod) * 0.15;
-    color += textureLod(u_texture, v_uv + vec2(-offsetScale, -offsetScale), targetLod) * 0.15;
-    color += textureLod(u_texture, v_uv + vec2(offsetScale, -offsetScale), targetLod) * 0.15;
+    float r = textureLod(u_texture, v_uv + offsetR, targetLod).r;
+    float g = textureLod(u_texture, v_uv, targetLod).g;
+    float b = textureLod(u_texture, v_uv + offsetB, targetLod).b;
+    float a = textureLod(u_texture, v_uv, targetLod).a;
 
-    // 2. Physical cues & lighting
+    float poissScale = blurIntensity * 0.004;
+    vec4 tap1 = textureLod(u_texture, v_uv + vec2(poissScale, poissScale), targetLod);
+    vec4 tap2 = textureLod(u_texture, v_uv + vec2(-poissScale, poissScale), targetLod);
+    vec4 tap3 = textureLod(u_texture, v_uv + vec2(-poissScale, -poissScale), targetLod);
+    vec4 tap4 = textureLod(u_texture, v_uv + vec2(poissScale, -poissScale), targetLod);
+    vec4 avgColor = (tap1 + tap2 + tap3 + tap4) * 0.25;
+
+    vec3 baseColor = mix(vec3(r, g, b), avgColor.rgb, clamp(blurIntensity * 1.5, 0.0, 0.7));
+
     vec3 N = normalize(v_normal);
     vec3 V = normalize(-v_viewPosition);
 
-    float lightTiltRad = radians(u_tiltAngle * 0.5);
-    vec3 lightDir = normalize(vec3(sin(lightTiltRad) * 0.35 + 0.15, 0.45, 0.85));
+    float tiltRad = radians(u_tiltAngle * 0.4);
+    vec3 lightDir = normalize(vec3(sin(tiltRad) * 0.4 + 0.1, 0.5, 0.85));
     vec3 H = normalize(lightDir + V);
 
-    float NdotL = max(dot(N, lightDir), 0.0);
-    float diffuse = mix(0.92, 1.0, NdotL);
-
-    // Specular oleophobic sheen
     float NdotH = max(dot(N, H), 0.0);
-    float specular = pow(NdotH, 28.0) * 0.22 * (0.3 + 0.7 * v_foldAmount);
+    float NdotV = max(dot(N, V), 0.0);
 
-    // Fresnel rim reflection
-    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.5) * 0.18 * v_foldAmount;
+    float wideSheen = pow(NdotH, 8.0) * 0.09 * (0.4 + 0.6 * v_foldAmount);
+    float sharpSpec = pow(NdotH, 32.0) * 0.18 * v_foldAmount;
 
-    // 3. Crease shadow and depth darkening
-    float creaseShadow = mix(0.88, 1.0, smoothstep(0.0, 0.04, d));
-    float depthDarkening = mix(1.0, 0.52, pow(d, 1.15) * v_foldAmount);
+    float fresnel = pow(1.0 - NdotV, 3.5) * 0.12 * v_foldAmount;
+    vec3 glassRimColor = vec3(0.85, 0.92, 1.0) * fresnel;
 
-    vec3 finalRgb = color.rgb * diffuse * creaseShadow * depthDarkening;
-    finalRgb += vec3(specular + fresnel);
+    float depthFade = mix(1.0, 0.48, pow(s, 1.2) * v_foldAmount);
 
-    float edgeVignette = smoothstep(1.0, 0.96, d * v_foldAmount);
-    float alpha = color.a * edgeVignette;
+    vec3 finalRgb = baseColor * depthFade;
+    finalRgb += vec3(wideSheen + sharpSpec);
+    finalRgb += glassRimColor;
 
-    fragColor = vec4(finalRgb, alpha);
+    float outerEdgeFade = smoothstep(1.0, 0.76, s * v_foldAmount);
+    float borderFeatherX = smoothstep(0.0, 0.015, v_gridUv.x) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.x));
+    float borderFeatherY = smoothstep(0.0, 0.015, v_gridUv.y) * (1.0 - smoothstep(0.985, 1.0, v_gridUv.y));
+    float seamlessMask = borderFeatherX * borderFeatherY;
+
+    float finalAlpha = a * outerEdgeFade * mix(1.0, seamlessMask, v_foldAmount * 0.5);
+
+    fragColor = vec4(finalRgb * finalAlpha, finalAlpha);
 }
 `;
 
