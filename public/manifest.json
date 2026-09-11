@@ -1,13 +1,13 @@
 {
+  "id": "/",
   "name": "Sahasra Single",
   "short_name": "Single",
-  "description": "Turn your photos into interactive folding experiences.",
   "start_url": "/",
-  "display": "standalone",
+  "scope": "/",
+  "display": "fullscreen",
   "orientation": "portrait",
   "background_color": "#000000",
   "theme_color": "#000000",
-  "categories": ["photo", "graphics", "entertainment"],
   "icons": [
     {
       "src": "/icons/icon-192.png",

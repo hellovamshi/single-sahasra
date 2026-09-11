@@ -3,221 +3,235 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { FoldRenderer } from '../webgl/renderer';
 import { InputController } from '../motion/inputController';
-import { ProcessedImage } from '../utils/imageProcessing';
-import { ControlsOverlay } from './ControlsOverlay';
-import { MotionPermissionModal } from './MotionPermissionModal';
-import { ErrorNotice } from './ErrorNotice';
-import { useReducedMotion } from '../hooks/useReducedMotion';
-import { HingeDirection, PermissionState } from '../motion/types';
+import { MotionSheet } from './MotionSheet';
+import { InstallSheet } from './InstallSheet';
+import { ChromeActions } from './ChromeActions';
+import { saveActiveImage, loadActiveImage, clearActiveImage } from '../storage/imageStorage';
 
-interface FoldCanvasProps {
-  image: ProcessedImage;
-  onChangePhoto: () => void;
-}
+const DEFAULT_IMAGE_PATH = '/backgrounds/default.png';
+const INSTALL_SHOWN_KEY = 'sahasra_install_shown';
 
-export const FoldCanvas: React.FC<FoldCanvasProps> = ({ image, onChangePhoto }) => {
+export const FoldCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<FoldRenderer | null>(null);
   const inputControllerRef = useRef<InputController | null>(null);
 
-  const reducedMotion = useReducedMotion();
+  const [hasCustomImage, setHasCustomImage] = useState<boolean>(false);
+  const [isChromeHidden, setIsChromeHidden] = useState<boolean>(false);
+  const [showMotionSheet, setShowMotionSheet] = useState<boolean>(false);
+  const [showInstallSheet, setShowInstallSheet] = useState<boolean>(false);
+  const [hintText, setHintText] = useState<string | null>(null);
+  const [fullscreenLabel, setFullscreenLabel] = useState<string>('Fullscreen');
 
-  // Motion and UI states
-  const [permissionState, setPermissionState] = useState<PermissionState>('granted');
-  const [showPermissionModal, setShowPermissionModal] = useState(false);
-  const [motionActive, setMotionActive] = useState(false);
-  const [webglError, setWebglError] = useState<string | null>(null);
-  const [instructionText, setInstructionText] = useState<string>('Roll your phone left or right');
-
-  // Manual fold override for reduced motion or testing
-  const manualFoldRef = useRef<{ hinge: HingeDirection; amount: number } | null>(null);
-
-  // Request iOS motion permission
-  const handleEnableMotion = useCallback(async () => {
-    if (!inputControllerRef.current) return;
-    try {
-      const granted = await inputControllerRef.current.requestMotionPermission();
-      if (granted) {
-        setPermissionState('granted');
-        setShowPermissionModal(false);
-        setMotionActive(true);
-        setInstructionText('Roll your phone left or right');
-      } else {
-        setPermissionState('denied');
-        setShowPermissionModal(false);
-        setInstructionText('Swipe horizontally to fold');
-      }
-    } catch (err) {
-      console.warn('Error enabling motion:', err);
+  // Load and apply an image to the renderer
+  const applyImageSource = useCallback((source: HTMLImageElement) => {
+    if (rendererRef.current) {
+      rendererRef.current.setImage(source, source.naturalWidth || source.width, source.naturalHeight || source.height);
     }
   }, []);
 
-  const handleDismissPermission = useCallback(() => {
-    setShowPermissionModal(false);
-    setInstructionText('Swipe horizontally to fold');
+  const loadImageFromUrl = useCallback((url: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
   }, []);
 
+  // Initialize Canvas & WebGL Stage
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // 1. Initialize Unified Input Controller
+    // Detect standalone app mode
+    const isApp =
+      Boolean((navigator as unknown as { standalone?: boolean }).standalone) ||
+      ['fullscreen', 'standalone', 'minimal-ui'].some((m) =>
+        window.matchMedia(`(display-mode: ${m})`).matches
+      );
+
+    if (isApp) {
+      document.documentElement.classList.add('is-app');
+    }
+
+    // Fullscreen support detection
+    if (!document.fullscreenEnabled) {
+      setFullscreenLabel('Add to Home Screen');
+    }
+
+    // 1. Initialize Input Controller
     const inputController = new InputController();
     inputControllerRef.current = inputController;
     inputController.attachCanvas(canvas);
 
-    // Check device motion permission status
-    const initialPerm = inputController.getPermissionState();
-    setPermissionState(initialPerm);
+    // 2. Initialize WebGL 2 Renderer
+    const renderer = new FoldRenderer(canvas, {
+      onError: (err) => console.error('WebGL error:', err),
+    });
+    rendererRef.current = renderer;
 
-    if (initialPerm === 'prompt') {
-      setShowPermissionModal(true);
-    }
-
-    // Subscribe to active motion detection
-    const unsubscribeMotion = inputController.onMotionActiveChange((active) => {
-      setMotionActive(active);
-      if (active) {
-        setInstructionText('Roll your phone left or right');
+    // 3. Load initial image (from IndexedDB or default.png)
+    (async () => {
+      try {
+        const cached = await loadActiveImage();
+        if (cached && cached.blob) {
+          const objectUrl = URL.createObjectURL(cached.blob);
+          const img = await loadImageFromUrl(objectUrl);
+          applyImageSource(img);
+          setHasCustomImage(true);
+        } else {
+          const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
+          applyImageSource(img);
+        }
+      } catch (err) {
+        console.warn('Loading default fallback:', err);
+        try {
+          const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
+          applyImageSource(img);
+        } catch {
+          // Keep canvas clean
+        }
       }
+    })();
+
+    // 4. Start 60 FPS Render Loop
+    renderer.start(() => {
+      return inputController.update(0.016);
     });
 
-    // Detect touch device
-    const isTouchDevice =
-      typeof window !== 'undefined' &&
-      ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    // 5. Sensor and onboarding checks for mobile
+    const permState = inputController.getPermissionState();
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-    if (!isTouchDevice) {
-      setInstructionText('Move pointer horizontally to fold');
-    }
-
-    // 2. Initialize WebGL 2 Renderer
-    try {
-      const renderer = new FoldRenderer(canvas, {
-        onContextLost: () => {
-          console.warn('WebGL context lost');
-        },
-        onContextRestored: () => {
-          console.log('WebGL context restored');
-          if (image) {
-            renderer.setImage(image.source, image.width, image.height);
-          }
-        },
-        onError: (err) => {
-          setWebglError(err.message);
-        },
-      });
-
-      rendererRef.current = renderer;
-
-      // Upload initial texture
-      renderer.setImage(image.source, image.width, image.height);
-
-      // Start decoupled 60 FPS animation loop
-      renderer.start(() => {
-        if (manualFoldRef.current) {
-          return {
-            foldAmount: manualFoldRef.current.amount,
-            hingeDirection: manualFoldRef.current.hinge,
-            tiltAngle: manualFoldRef.current.amount * 45,
-            isInteracting: manualFoldRef.current.amount > 0.01,
-            source: 'pointer',
-          };
-        }
-
-        const state = inputController.update(0.016);
-        return state;
-      });
-    } catch (err) {
-      setWebglError(err instanceof Error ? err.message : 'WebGL 2 initialization failed');
-    }
-
-    // 3. Handle window resizing & orientation change
-    const handleResize = () => {
-      if (rendererRef.current) {
-        rendererRef.current.resize();
+    if (isTouch) {
+      if (permState === 'prompt') {
+        setShowMotionSheet(true);
+      } else {
+        // Android or granted: show hint
+        setHintText('Face the screen toward the sky, then roll the phone left or right.');
+        setTimeout(() => setHintText(null), 6000);
       }
+    }
+
+    // Resize handler
+    const handleResize = () => {
+      if (rendererRef.current) rendererRef.current.resize();
     };
 
     window.addEventListener('resize', handleResize, { passive: true });
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
-    // Optional user gesture fallback: tapping canvas triggers permission if still prompt
-    const handleCanvasTap = () => {
-      if (inputController.getPermissionState() === 'prompt') {
-        handleEnableMotion();
-      }
-    };
-    canvas.addEventListener('click', handleCanvasTap, { once: true });
-
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
-      canvas.removeEventListener('click', handleCanvasTap);
-      unsubscribeMotion();
-
-      if (rendererRef.current) {
-        rendererRef.current.destroy();
-        rendererRef.current = null;
-      }
-
-      if (inputControllerRef.current) {
-        inputControllerRef.current.detach();
-        inputControllerRef.current = null;
-      }
+      if (rendererRef.current) rendererRef.current.destroy();
+      if (inputControllerRef.current) inputControllerRef.current.detach();
     };
-  }, [image, handleEnableMotion]);
+  }, [applyImageSource, loadImageFromUrl]);
 
-  const handleReset = useCallback(() => {
-    manualFoldRef.current = null;
-    if (inputControllerRef.current) {
-      inputControllerRef.current.reset();
+  // Motion permission handler
+  const handleAllowMotion = async () => {
+    if (!inputControllerRef.current) return;
+    const granted = await inputControllerRef.current.requestMotionPermission();
+    setShowMotionSheet(false);
+
+    if (granted) {
+      setHintText('Face the screen toward the sky, then roll the phone left or right.');
+      setTimeout(() => setHintText(null), 6000);
+
+      // Onboarding Step 2: Home Screen guide (if not already shown and not in app mode)
+      const isApp =
+        Boolean((navigator as unknown as { standalone?: boolean }).standalone) ||
+        window.matchMedia('(display-mode: standalone)').matches;
+
+      const alreadyShown = localStorage.getItem(INSTALL_SHOWN_KEY);
+      if (!isApp && !alreadyShown) {
+        setTimeout(() => {
+          localStorage.setItem(INSTALL_SHOWN_KEY, '1');
+          setShowInstallSheet(true);
+        }, 1200);
+      }
     }
-  }, []);
+  };
 
-  const handleManualFoldChange = useCallback((hinge: HingeDirection, amount: number) => {
-    manualFoldRef.current = { hinge, amount };
-  }, []);
+  // Canvas tap: toggles action pills visibility
+  const handleCanvasClick = () => {
+    setIsChromeHidden((prev) => !prev);
+  };
+
+  // File chosen
+  const handleImageSelected = async (file: File) => {
+    try {
+      const img = await loadImageFromUrl(URL.createObjectURL(file));
+      applyImageSource(img);
+      setHasCustomImage(true);
+      await saveActiveImage(file, file.name, img.width, img.height);
+      // Auto-hide pills on selection
+      setIsChromeHidden(true);
+    } catch (err) {
+      console.error('Failed to load selected photo:', err);
+    }
+  };
+
+  // Revert to default
+  const handleUseDefault = async () => {
+    try {
+      await clearActiveImage();
+      const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
+      applyImageSource(img);
+      setHasCustomImage(false);
+    } catch (err) {
+      console.error('Failed to restore default photo:', err);
+    }
+  };
+
+  // Fullscreen button
+  const handleFullscreenClick = async () => {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      setFullscreenLabel('Fullscreen');
+    } else if (document.fullscreenEnabled) {
+      await document.documentElement.requestFullscreen();
+      setFullscreenLabel('Exit fullscreen');
+    } else {
+      setShowInstallSheet(true);
+    }
+  };
 
   return (
-    <div className="relative w-full h-screen bg-[#000000] overflow-hidden select-none">
-      {/* WebGL 2 Canvas */}
+    <main className="relative w-full h-full min-h-screen bg-black overflow-hidden select-none">
+      {/* Fullscreen WebGL Canvas */}
       <canvas
         ref={canvasRef}
-        className="w-full h-full block touch-none cursor-ew-resize"
-        tabIndex={0}
-        aria-label="Interactive folding display. Drag or tilt to fold."
+        className="stage cursor-pointer"
+        onClick={handleCanvasClick}
+        aria-label="Interactive folding display. Tap to toggle controls, roll phone to fold."
       />
 
-      {/* iOS Motion Permission Prompt */}
-      {showPermissionModal && (
-        <MotionPermissionModal
-          onEnable={handleEnableMotion}
-          onDismiss={handleDismissPermission}
-        />
-      )}
-
-      {/* Controls Overlay */}
-      <ControlsOverlay
-        onReset={handleReset}
-        onChangePhoto={onChangePhoto}
-        isMotionActive={motionActive}
-        instructionText={instructionText}
-        reducedMotion={reducedMotion}
-        onManualFoldChange={handleManualFoldChange}
-        onEnableMotion={handleEnableMotion}
-        showEnableMotionButton={!motionActive && permissionState === 'prompt'}
+      {/* Chrome Action Pills, Corner Credit & Hint */}
+      <ChromeActions
+        isHidden={isChromeHidden}
+        hasCustomImage={hasCustomImage}
+        hintText={hintText}
+        onImageSelected={handleImageSelected}
+        onUseDefault={handleUseDefault}
+        onFullscreenClick={handleFullscreenClick}
+        fullscreenLabel={fullscreenLabel}
       />
 
-      {/* WebGL Error fallback */}
-      {webglError && (
-        <ErrorNotice
-          title="WebGL 2 Unavailable"
-          message={webglError}
-          onRetry={() => window.location.reload()}
-          retryLabel="Reload"
-        />
-      )}
-    </div>
+      {/* Step 1: Motion Permission Dialog */}
+      <MotionSheet
+        isOpen={showMotionSheet}
+        onAllow={handleAllowMotion}
+      />
+
+      {/* Step 2: Add to Home Screen Dialog */}
+      <InstallSheet
+        isOpen={showInstallSheet}
+        onDismiss={() => setShowInstallSheet(false)}
+      />
+    </main>
   );
 };
