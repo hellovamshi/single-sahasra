@@ -6,12 +6,10 @@ import { InputController } from '../motion/inputController';
 import { MotionSheet } from './MotionSheet';
 import { InstallSheet } from './InstallSheet';
 import { ChromeActions } from './ChromeActions';
-import { DesktopQRModal } from './DesktopQRModal';
-import { saveActiveImage, loadActiveImage, clearActiveImage } from '../storage/imageStorage';
+import { loadActiveImage } from '../storage/imageStorage';
 
 const DEFAULT_IMAGE_PATH = '/backgrounds/default.jpg';
 const FALLBACK_IMAGE_PATH = '/backgrounds/default.png';
-const INSTALL_SHOWN_KEY = 'sahasra_install_shown';
 
 export const FoldCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,15 +17,12 @@ export const FoldCanvas: React.FC = () => {
   const inputControllerRef = useRef<InputController | null>(null);
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
-  const [hasCustomImage, setHasCustomImage] = useState<boolean>(false);
   const [isChromeHidden, setIsChromeHidden] = useState<boolean>(false);
   const [showMotionSheet, setShowMotionSheet] = useState<boolean>(false);
   const [showInstallSheet, setShowInstallSheet] = useState<boolean>(false);
-  const [showQRModal, setShowQRModal] = useState<boolean>(false);
-  const [isLaptop, setIsLaptop] = useState<boolean>(false);
-  const [currentUrl, setCurrentUrl] = useState<string>('https://single.sahasra.tech');
+  const [isAndroid, setIsAndroid] = useState<boolean>(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [hintText, setHintText] = useState<string | null>(null);
-  const [fullscreenLabel, setFullscreenLabel] = useState<string>('Fullscreen');
 
   // Load and apply an image to the renderer
   const applyImageSource = useCallback((source: HTMLImageElement) => {
@@ -62,11 +57,6 @@ export const FoldCanvas: React.FC = () => {
       document.documentElement.classList.add('is-app');
     }
 
-    // Fullscreen support detection
-    if (!document.fullscreenEnabled) {
-      setFullscreenLabel('Add to Home Screen');
-    }
-
     // 1. Initialize Input Controller
     const inputController = new InputController();
     inputControllerRef.current = inputController;
@@ -78,7 +68,7 @@ export const FoldCanvas: React.FC = () => {
     });
     rendererRef.current = renderer;
 
-    // 3. Load initial image (from IndexedDB or default.png)
+    // 3. Load initial image (from IndexedDB or default)
     (async () => {
       try {
         const cached = await loadActiveImage();
@@ -86,7 +76,6 @@ export const FoldCanvas: React.FC = () => {
           const objectUrl = URL.createObjectURL(cached.blob);
           const img = await loadImageFromUrl(objectUrl);
           applyImageSource(img);
-          setHasCustomImage(true);
         } else {
           try {
             const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
@@ -117,34 +106,46 @@ export const FoldCanvas: React.FC = () => {
       return inputController.update(0.016);
     });
 
-    // 5. Automatic Device Detection (Mobile vs Laptop/Desktop)
+    // 5. Automatic Device Detection (Mobile vs Laptop/Desktop & Android vs iOS)
     const ua = navigator.userAgent || '';
-    const isMobileUA = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+    const isAndroidDevice = /Android/i.test(ua);
+    const isIPhoneDevice = /iPhone|iPad|iPod/i.test(ua);
     const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     const isFinePointer = window.matchMedia?.('(pointer: fine)').matches && navigator.maxTouchPoints === 0;
-    const isMobile = isMobileUA || (hasTouch && !isFinePointer);
+    const isMobile = isAndroidDevice || isIPhoneDevice || (hasTouch && !isFinePointer);
 
-    setIsLaptop(!isMobile);
+    setIsAndroid(isAndroidDevice);
     document.documentElement.classList.add(isMobile ? 'is-phone' : 'is-laptop');
 
-    if (typeof window !== 'undefined') {
-      setCurrentUrl(window.location.href);
-    }
-
-    if (isMobile) {
-      const permState = inputController.getPermissionState();
-      if (permState === 'prompt') {
-        setShowMotionSheet(true);
-      } else {
-        // Android or already granted: show hint
+    // 6. Direct Auto-Popup for Install (Android & iPhone)
+    // If not already in standalone mode, prompt user to install
+    if (!isApp) {
+      setTimeout(() => {
+        setShowInstallSheet(true);
+      }, 700);
+    } else {
+      // If already installed, show gentle gesture hint
+      if (isMobile) {
         setHintText('Face the screen toward the sky, then roll the phone left or right.');
         setTimeout(() => setHintText(null), 6000);
       }
-    } else {
-      // Desktop / Laptop mode: show mouse/trackpad fold hint
-      setHintText('Scroll trackpad, drag with mouse, or use ← → arrow keys to fold.');
-      setTimeout(() => setHintText(null), 8000);
     }
+
+    if (!isMobile) {
+      setHintText('Scroll trackpad, drag with mouse, or use ← → arrow keys to fold.');
+      setTimeout(() => setHintText(null), 7000);
+    }
+
+    // 7. PWA beforeinstallprompt handler (Chrome on Android)
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      if (!isApp) {
+        setShowInstallSheet(true);
+      }
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
     // Resize handler
     const handleResize = () => {
@@ -155,6 +156,7 @@ export const FoldCanvas: React.FC = () => {
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
     return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
       if (rendererRef.current) rendererRef.current.destroy();
@@ -162,7 +164,23 @@ export const FoldCanvas: React.FC = () => {
     };
   }, [applyImageSource, loadImageFromUrl]);
 
-  // Motion permission handler
+  // Handle Android Direct Install Now click
+  const handleInstallNow = async () => {
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const choiceResult = await deferredPrompt.userChoice;
+        if (choiceResult.outcome === 'accepted') {
+          setShowInstallSheet(false);
+        }
+      } catch (err) {
+        console.error('Install prompt error:', err);
+      }
+      setDeferredPrompt(null);
+    }
+  };
+
+  // Motion permission handler (iOS)
   const handleAllowMotion = async () => {
     if (!inputControllerRef.current) return;
     const granted = await inputControllerRef.current.requestMotionPermission();
@@ -171,63 +189,17 @@ export const FoldCanvas: React.FC = () => {
     if (granted) {
       setHintText('Face the screen toward the sky, then roll the phone left or right.');
       setTimeout(() => setHintText(null), 6000);
+    }
+  };
 
-      // Onboarding Step 2: Home Screen guide (if not already shown and not in app mode)
-      const isApp =
-        Boolean((navigator as unknown as { standalone?: boolean }).standalone) ||
-        window.matchMedia('(display-mode: standalone)').matches;
-
-      const alreadyShown = localStorage.getItem(INSTALL_SHOWN_KEY);
-      if (!isApp && !alreadyShown) {
-        setTimeout(() => {
-          localStorage.setItem(INSTALL_SHOWN_KEY, '1');
-          setShowInstallSheet(true);
-        }, 1200);
+  // When install sheet is dismissed on iOS, check if motion permission needs prompting
+  const handleDismissInstallSheet = () => {
+    setShowInstallSheet(false);
+    if (!isAndroid && inputControllerRef.current) {
+      const permState = inputControllerRef.current.getPermissionState();
+      if (permState === 'prompt') {
+        setShowMotionSheet(true);
       }
-    }
-  };
-
-  // File chosen
-  const handleImageSelected = async (file: File) => {
-    try {
-      const img = await loadImageFromUrl(URL.createObjectURL(file));
-      applyImageSource(img);
-      setHasCustomImage(true);
-      await saveActiveImage(file, file.name, img.width, img.height);
-      // Auto-hide pills on selection
-      setIsChromeHidden(true);
-    } catch (err) {
-      console.error('Failed to load selected photo:', err);
-    }
-  };
-
-  // Revert to default
-  const handleUseDefault = async () => {
-    try {
-      await clearActiveImage();
-      try {
-        const img = await loadImageFromUrl(DEFAULT_IMAGE_PATH);
-        applyImageSource(img);
-      } catch {
-        const img = await loadImageFromUrl(FALLBACK_IMAGE_PATH);
-        applyImageSource(img);
-      }
-      setHasCustomImage(false);
-    } catch (err) {
-      console.error('Failed to restore default photo:', err);
-    }
-  };
-
-  // Fullscreen button
-  const handleFullscreenClick = async () => {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-      setFullscreenLabel('Fullscreen');
-    } else if (document.fullscreenEnabled) {
-      await document.documentElement.requestFullscreen();
-      setFullscreenLabel('Exit fullscreen');
-    } else {
-      setShowInstallSheet(true);
     }
   };
 
@@ -251,36 +223,25 @@ export const FoldCanvas: React.FC = () => {
         aria-label="Interactive folding display. Tap to toggle controls, roll phone to fold."
       />
 
-      {/* Chrome Action Pills, Corner Credit & Hint */}
+      {/* WhatsApp Coin & ainox.in credit & Hint */}
       <ChromeActions
         isHidden={isChromeHidden}
-        hasCustomImage={hasCustomImage}
         hintText={hintText}
-        onImageSelected={handleImageSelected}
-        onUseDefault={handleUseDefault}
-        onFullscreenClick={handleFullscreenClick}
-        fullscreenLabel={fullscreenLabel}
-        isLaptop={isLaptop}
-        onOpenPhoneModal={() => setShowQRModal(true)}
       />
 
-      {/* Step 1: Motion Permission Dialog (Mobile Only) */}
+      {/* Direct Add to Home Screen / Install Now Sheet */}
+      <InstallSheet
+        isOpen={showInstallSheet}
+        onDismiss={handleDismissInstallSheet}
+        isAndroid={isAndroid}
+        canInstallDirectly={Boolean(deferredPrompt)}
+        onInstallNow={handleInstallNow}
+      />
+
+      {/* Motion Permission Dialog (iOS Only when prompted) */}
       <MotionSheet
         isOpen={showMotionSheet}
         onAllow={handleAllowMotion}
-      />
-
-      {/* Step 2: Add to Home Screen Dialog (Mobile Only) */}
-      <InstallSheet
-        isOpen={showInstallSheet}
-        onDismiss={() => setShowInstallSheet(false)}
-      />
-
-      {/* Desktop / Laptop: Scan to Open on Phone Modal */}
-      <DesktopQRModal
-        isOpen={showQRModal}
-        onDismiss={() => setShowQRModal(false)}
-        url={currentUrl}
       />
     </main>
   );
