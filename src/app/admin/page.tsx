@@ -45,16 +45,16 @@ export default function AdminDashboardPage() {
         body: JSON.stringify({ password: pinInput }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success && data.token) {
         sessionStorage.setItem(AUTH_KEY, data.token);
         setIsAuthenticated(true);
         setErrorMsg(null);
       } else {
-        setErrorMsg(data.error || 'Access Denied: Incorrect Password');
+        setErrorMsg('Access Denied');
       }
     } catch {
-      setErrorMsg('Authentication error. Please try again.');
+      setErrorMsg('Access Denied');
     } finally {
       setIsVerifying(false);
     }
