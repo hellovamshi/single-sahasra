@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrandCrossfade } from './BrandCrossfade';
+import { trackEvent } from '../analytics/tracker';
 
 interface SocialPopupProps {
   isOpen: boolean;
@@ -9,6 +10,12 @@ interface SocialPopupProps {
 }
 
 export const SocialPopup: React.FC<SocialPopupProps> = ({ isOpen, onDismiss }) => {
+  useEffect(() => {
+    if (isOpen) {
+      trackEvent('social_popup_shown');
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   return (
@@ -26,6 +33,7 @@ export const SocialPopup: React.FC<SocialPopupProps> = ({ isOpen, onDismiss }) =
             href="https://whatsapp.com/channel/0029Vb7g8UH3AzNPp9Wfkb1S"
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackEvent('whatsapp_popup_click')}
             className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 transition-all duration-200 active:scale-98 group text-white"
           >
             <div className="w-11 h-11 rounded-xl bg-[#25D366] flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/30 group-hover:scale-105 transition-transform">
@@ -47,6 +55,7 @@ export const SocialPopup: React.FC<SocialPopupProps> = ({ isOpen, onDismiss }) =
             href="https://www.instagram.com/sahasra.tech"
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackEvent('instagram_click')}
             className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-gradient-to-r from-purple-500/15 via-pink-500/15 to-orange-500/15 hover:from-purple-500/25 hover:via-pink-500/25 hover:to-orange-500/25 border border-pink-500/35 transition-all duration-200 active:scale-98 group text-white"
           >
             <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-[#fd5949] via-[#d6249f] to-[#285AEB] flex items-center justify-center text-white shrink-0 shadow-lg shadow-pink-500/25 group-hover:scale-105 transition-transform">
@@ -68,7 +77,10 @@ export const SocialPopup: React.FC<SocialPopupProps> = ({ isOpen, onDismiss }) =
           <button
             className="sheet__cta py-2.5 px-6"
             type="button"
-            onClick={onDismiss}
+            onClick={() => {
+              trackEvent('social_popup_dismissed');
+              onDismiss();
+            }}
           >
             Continue
           </button>

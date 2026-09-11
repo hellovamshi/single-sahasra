@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrandCrossfade } from './BrandCrossfade';
+import { trackEvent } from '../analytics/tracker';
 
 interface InstallSheetProps {
   isOpen: boolean;
@@ -18,6 +19,12 @@ export const InstallSheet: React.FC<InstallSheetProps> = ({
   onInstallNow,
   canInstallDirectly,
 }) => {
+  useEffect(() => {
+    if (isOpen) {
+      trackEvent('install_prompt_shown');
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   return (
@@ -37,7 +44,10 @@ export const InstallSheet: React.FC<InstallSheetProps> = ({
               <button
                 className="sheet__cta w-full justify-center text-base py-3 font-semibold shadow-lg"
                 type="button"
-                onClick={onInstallNow}
+                onClick={() => {
+                  trackEvent('install_accepted');
+                  onInstallNow?.();
+                }}
                 autoFocus
               >
                 Install Now
@@ -62,7 +72,10 @@ export const InstallSheet: React.FC<InstallSheetProps> = ({
           <button
             className="sheet__cta"
             type="button"
-            onClick={onDismiss}
+            onClick={() => {
+              trackEvent('install_dismissed');
+              onDismiss();
+            }}
           >
             {isAndroid && canInstallDirectly ? 'Maybe Later' : 'Got it'}
           </button>

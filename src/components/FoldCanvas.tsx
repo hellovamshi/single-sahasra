@@ -157,10 +157,14 @@ export const FoldCanvas: React.FC = () => {
     window.addEventListener('resize', handleResize, { passive: true });
     window.addEventListener('orientationchange', handleResize, { passive: true });
 
-    // 8. Auto-popup after 10 seconds: Join WhatsApp / Follow Instagram
+    // 8. Auto-popup for Community (WhatsApp/Instagram) after user has explored the app (35s)
     const socialTimer = setTimeout(() => {
-      setShowSocialPopup(true);
-    }, 10000);
+      const alreadyShown = typeof window !== 'undefined' ? sessionStorage.getItem('sahasra_social_shown') : null;
+      if (!alreadyShown) {
+        sessionStorage.setItem('sahasra_social_shown', '1');
+        setShowSocialPopup(true);
+      }
+    }, 35000);
 
     return () => {
       clearTimeout(socialTimer);

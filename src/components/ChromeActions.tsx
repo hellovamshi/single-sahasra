@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { trackVisit } from '../analytics/tracker';
+import { trackVisit, trackEvent } from '../analytics/tracker';
 import { BrandCrossfade } from './BrandCrossfade';
 
 interface ChromeActionsProps {
@@ -27,6 +27,7 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
           href="https://whatsapp.com/channel/0029Vb7g8UH3AzNPp9Wfkb1S"
           target="_blank"
           rel="noopener noreferrer"
+          onClick={() => trackEvent('whatsapp_coin_click')}
           aria-label="Join WhatsApp Channel"
           title="Join WhatsApp Channel"
         >
