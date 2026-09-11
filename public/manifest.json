@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Sahasra Single",
-  "short_name": "Single",
+  "name": "Sahasra Solo",
+  "short_name": "Solo",
   "start_url": "/",
   "scope": "/",
   "display": "fullscreen",

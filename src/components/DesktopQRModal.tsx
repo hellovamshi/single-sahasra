@@ -46,7 +46,7 @@ export const DesktopQRModal: React.FC<DesktopQRModalProps> = ({ isOpen, onDismis
           </button>
           <a
             className="sheet__credit justify-center text-xs text-white/60 hover:text-white"
-            href="https://www.instagram.com/sahasra.tech"
+            href="https://whatsapp.com/channel/0029Vb7g8UH3AzNPp9Wfkb1S"
             target="_blank"
             rel="noopener noreferrer"
           >

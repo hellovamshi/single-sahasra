@@ -2,23 +2,23 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Sahasra Single — The Fold for Phones That Don’t Fold',
+  title: 'Sahasra Solo — The Fold for Phones That Don’t Fold',
   description: 'Roll your phone like closing a book and the image folds away in real-time. A WebGL + gravity sensor experience.',
-  metadataBase: new URL('https://single.sahasra.tech'),
-  applicationName: 'Single',
-  authors: [{ name: 'Sahasra Tech', url: 'https://www.instagram.com/sahasra.tech' }],
+  metadataBase: new URL('https://solo.sahasra.tech'),
+  applicationName: 'Solo',
+  authors: [{ name: 'Sahasra Tech', url: 'https://whatsapp.com/channel/0029Vb7g8UH3AzNPp9Wfkb1S' }],
   keywords: ['iPhone fold animation', 'WebGL 2', 'gravity sensor', 'devicemotion', 'Sahasra Tech', 'PWA'],
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Single',
+    title: 'Solo',
   },
   openGraph: {
-    title: 'Sahasra Single — The Fold for Phones That Don’t Fold',
+    title: 'Sahasra Solo — The Fold for Phones That Don’t Fold',
     description: 'Roll your phone like closing a book and the image folds away. WebGL + live gravity sensor magic.',
-    url: 'https://single.sahasra.tech',
-    siteName: 'Sahasra Single by Sahasra Tech',
+    url: 'https://solo.sahasra.tech',
+    siteName: 'Sahasra Solo by Sahasra Tech',
     type: 'website',
     images: [
       {
