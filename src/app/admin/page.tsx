@@ -558,7 +558,7 @@ export default function AdminDashboardPage() {
             Sahasra Solo Analytics Engine • Last updated: {lastRefreshed.toLocaleTimeString()}
           </div>
           <div>
-            Powered by <a href="https://ainox.in" target="_blank" rel="noreferrer" className="text-white/60 hover:text-white">ainox.in</a>
+            Powered by <a href="https://www.instagram.com/sahasra.tech" target="_blank" rel="noreferrer" className="text-white/60 hover:text-white">sahasra tech</a>
           </div>
         </footer>
 

@@ -308,7 +308,7 @@ export const FoldCanvas: React.FC = () => {
         aria-label="Interactive folding display. Tap to toggle controls, roll phone to fold."
       />
 
-      {/* WhatsApp Coin & ainox.in credit & Hint */}
+      {/* WhatsApp Coin & sahasra tech credit & Hint */}
       <ChromeActions
         isHidden={isChromeHidden}
         hintText={hintText}

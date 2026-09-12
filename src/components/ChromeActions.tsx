@@ -20,7 +20,7 @@ export const ChromeActions: React.FC<ChromeActionsProps> = ({
 
   return (
     <>
-      {/* Bottom-Right WhatsApp Coin & Cross-fading credit (ainox.in & sahasra tech) */}
+      {/* Bottom-Right WhatsApp Coin & sahasra tech credit */}
       <div className={`bottom-right-dock ${isHidden ? 'is-hidden' : ''}`}>
         <a
           className="whatsapp-coin glass"
