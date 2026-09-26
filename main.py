@@ -128,8 +128,11 @@ class SahasraTechEngine:
             logger.info("[PIPELINE] Deal Engine is currently PAUSED via Telegram command - message skipped")
             return
 
-        chat = await event.get_chat()
-        source_name = getattr(chat, 'username', None) or str(getattr(chat, 'id', 'unknown'))
+        try:
+            chat = await event.get_chat()
+            source_name = getattr(chat, 'username', None) or str(getattr(chat, 'id', 'unknown'))
+        except Exception:
+            source_name = str(getattr(event, 'chat_id', 'unknown'))
 
         logger.info(f"[PIPELINE] New message received from {source_name} (ID: {message.id})")
 
