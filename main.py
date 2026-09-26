@@ -70,10 +70,23 @@ class SahasraTechEngine:
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.session_name = os.getenv("TELEGRAM_SESSION_NAME", "sahasra_userbot")
 
-        # Channels
+        # Channels (10 Monitored Target Channels)
+        default_targets = [
+            "@iamprasadtech", "@TechFactsDeals", "@tech24deals", "@mspdealsofficial",
+            "@trtpremiumdeals", "@TeluguTechworld", "@trtdeals", "@elitedealsx",
+            "@extrape", "@telugutipsdeals"
+        ]
         source_raw = os.getenv("TELEGRAM_SOURCE_CHANNELS", "")
-        self.source_channels = [s.strip() for s in source_raw.split(",") if s.strip()]
-        self.destination_channel = os.getenv("TELEGRAM_DESTINATION_CHANNEL", "")
+        parsed = [s.strip() for s in source_raw.split(",") if s.strip()]
+        if not parsed:
+            self.source_channels = default_targets
+        else:
+            parsed_set = {ch.lower() for ch in parsed}
+            for d in default_targets:
+                if d.lower() not in parsed_set:
+                    parsed.append(d)
+            self.source_channels = parsed
+        self.destination_channel = os.getenv("TELEGRAM_DESTINATION_CHANNEL", "@sahasratechdeals")
 
         self.client = None
         self.bot_client = None
